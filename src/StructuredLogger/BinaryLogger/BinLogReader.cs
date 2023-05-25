@@ -93,6 +93,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
             var streamLength = stream.Length;
 
+            var allWatch = Stopwatch.StartNew();
             while (true)
             {
                 BuildEventArgs instance = null;
@@ -134,6 +135,9 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     OnStringDictionaryComplete?.Invoke(strings);
                 }
             }
+
+            var elapsedAll = allWatch.Elapsed;
+            Console.WriteLine($"Read {recordsRead} records in {elapsedAll} = {elapsedAll.TotalMilliseconds} ms");
 
             if (progress != null)
             {
