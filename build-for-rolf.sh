@@ -4,4 +4,9 @@ set -o pipefail
 IFS=$'\n\t'
 
 cd src/StructuredLogViewer.Avalonia
-dotnet publish --self-contained -r osx-x64
+if [[ $(arch) == "arm64" ]]; then
+    RID=osx-arm64
+else
+    RID=osx-x64
+fi
+dotnet publish --self-contained -r $RID
