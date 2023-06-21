@@ -47,7 +47,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
             }
 
             var buildEventContext = args.BuildEventContext;
-            if (buildEventContext.TaskId != BuildEventContext.InvalidTaskId)
+            if (buildEventContext != null && buildEventContext.TaskId != BuildEventContext.InvalidTaskId)
             {
                 if (message.StartsWith(Strings.OutputItemsMessagePrefix, StringComparison.Ordinal))
                 {
@@ -94,7 +94,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     }
                 }
             }
-            else if (buildEventContext.TargetId != BuildEventContext.InvalidTargetId)
+            else if (buildEventContext != null && buildEventContext.TargetId != BuildEventContext.InvalidTargetId)
             {
                 if (message.StartsWith(Strings.ItemGroupIncludeMessagePrefix, StringComparison.Ordinal))
                 {
@@ -124,7 +124,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     return;
                 }
             }
-            else if (buildEventContext.EvaluationId != BuildEventContext.InvalidEvaluationId)
+            else if (buildEventContext != null && buildEventContext.EvaluationId != BuildEventContext.InvalidEvaluationId)
             {
             }
             else
@@ -392,12 +392,16 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
             var buildEventContext = args.BuildEventContext;
 
-            if (buildEventContext.TaskId > 0)
+            if (buildEventContext != null && buildEventContext.TaskId > 0)
             {
                 parent = GetTask(args);
                 if (parent is Task task)
                 {
-                    if (task is ResolveAssemblyReferenceTask rar)
+                    if (args is AssemblyLoadBuildEventArgs)
+                    {
+                        nodeToAdd = new Message() { Text = Intern(message), IsLowRelevance = lowRelevance };
+                    }
+                    else if (task is ResolveAssemblyReferenceTask rar)
                     {
                         if (ProcessRAR(rar, ref parent, message))
                         {
@@ -427,7 +431,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     }
                 }
             }
-            else if (buildEventContext.TargetId > 0)
+            else if (buildEventContext != null && buildEventContext.TargetId > 0)
             {
                 parent = GetTarget(args);
 
@@ -436,7 +440,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     lowRelevance = true;
                 }
             }
-            else if (buildEventContext.ProjectContextId > 0)
+            else if (buildEventContext != null && buildEventContext.ProjectContextId > 0)
             {
                 var project = construction.GetOrAddProject(buildEventContext.ProjectContextId);
                 parent = project;
@@ -466,7 +470,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     }
                 }
             }
-            else if (buildEventContext.EvaluationId != -1)
+            else if (buildEventContext != null && buildEventContext.EvaluationId != -1)
             {
                 parent = construction.EvaluationFolder;
 
@@ -497,6 +501,10 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     // avoid duplicate messages
                     return;
                 }
+            }
+            else if (args.Message.StartsWith(Strings.NodesReusal, StringComparison.Ordinal))
+            {
+                parent = construction.Build.GetOrCreateNodeWithName<Folder>(Strings.NodesManagementNode);
             }
 
             if (parent == null)
@@ -529,6 +537,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     lowRelevance = true;
                 }
                 else if (
+                    buildEventContext != null &&
                     buildEventContext.NodeId == 0 &&
                     buildEventContext.ProjectContextId == 0 &&
                     buildEventContext.ProjectInstanceId == 0 &&
@@ -547,6 +556,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     return;
                 }
                 else if (
+                    buildEventContext != null &&
                     buildEventContext.NodeId == -2 &&
                     buildEventContext.ProjectContextId == -2 &&
                     buildEventContext.ProjectInstanceId == -1)

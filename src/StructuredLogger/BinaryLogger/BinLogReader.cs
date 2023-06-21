@@ -66,18 +66,16 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
             OnFileFormatVersionRead?.Invoke(fileFormatVersion);
 
-            // the log file is written using a newer version of file format
-            // that we don't know how to read
-            if (fileFormatVersion > BinaryLogger.FileFormatVersion)
-            {
-                var text = $"Unsupported log file format. Latest supported version is {BinaryLogger.FileFormatVersion}, the log file has version {fileFormatVersion}.";
-                throw new NotSupportedException(text);
-            }
+            EnsureFileFormatVersionKnown(fileFormatVersion);
 
             // Use a producer-consumer queue so that IO can happen on one thread
             // while processing can happen on another thread decoupled. The speed
             // up is from 4.65 to 4.15 seconds.
-            var queue = new BlockingCollection<BuildEventArgs>(boundedCapacity: 5000);
+
+            // see issue https://github.com/KirillOsenkov/MSBuildStructuredLog/issues/684
+            var maxBoundedCapacity = 50000;
+
+            var queue = new BlockingCollection<BuildEventArgs>(boundedCapacity: maxBoundedCapacity);
             var processingTask = System.Threading.Tasks.Task.Run(() =>
             {
                 foreach (var args in queue.GetConsumingEnumerable())
@@ -117,7 +115,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
                 queue.Add(instance);
 
-                if (progress != null && recordsRead % 1000 == 0 && stopwatch.ElapsedMilliseconds > 200)
+                if (progress != null && stopwatch.ElapsedMilliseconds > 200)
                 {
                     stopwatch.Restart();
                     var streamPosition = stream.Position;
@@ -140,6 +138,22 @@ namespace Microsoft.Build.Logging.StructuredLogger
             if (progress != null)
             {
                 progress.Report(1.0);
+            }
+        }
+
+        private void EnsureFileFormatVersionKnown(int fileFormatVersion)
+        {
+            // the log file is written using a newer version of file format
+            // that we don't know how to read
+            if (fileFormatVersion > BinaryLogger.FileFormatVersion)
+            {
+                var text = $"Unsupported log file format. Latest supported version is {BinaryLogger.FileFormatVersion}, the log file has version {fileFormatVersion}.";
+                if (BinaryLogger.IsNewerVersionAvailable)
+                {
+                    text += " Update available - restart this instance to automatically use newer version.";
+                }
+
+                throw new NotSupportedException(text);
             }
         }
 
@@ -210,13 +224,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
             int fileFormatVersion = binaryReader.ReadInt32();
 
-            // the log file is written using a newer version of file format
-            // that we don't know how to read
-            if (fileFormatVersion > BinaryLogger.FileFormatVersion)
-            {
-                var text = $"Unsupported log file format. Latest supported version is {BinaryLogger.FileFormatVersion}, the log file has version {fileFormatVersion}.";
-                throw new NotSupportedException(text);
-            }
+            EnsureFileFormatVersionKnown(fileFormatVersion);
 
             long lengthOfBlobsAddedLastTime = 0;
 

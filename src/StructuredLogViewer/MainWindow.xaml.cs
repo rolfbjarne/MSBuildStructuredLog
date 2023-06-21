@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Windows;
 using System.Windows.Controls;
@@ -211,6 +212,7 @@ namespace StructuredLogViewer
                 {
                     var versionText = result.Version.ToString();
                     message = "After restarting the app you will be on version " + versionText;
+                    BinaryLogger.IsNewerVersionAvailable = true;
                     FileAssociations.EnsureAssociationsSet(versionText);
                 }
                 else
@@ -301,9 +303,11 @@ namespace StructuredLogViewer
         private void UpdateRecentItemsMenu(WelcomeScreen welcomeScreen = null)
         {
             welcomeScreen = welcomeScreen ?? new WelcomeScreen();
+
+            RecentItemsSeparator.Visibility = Visibility.Collapsed;
+            RecentProjectsMenu.Items.Clear();
             if (welcomeScreen.ShowRecentProjects)
             {
-                RecentProjectsMenu.Items.Clear();
                 RecentProjectsMenu.Visibility = Visibility.Visible;
                 RecentItemsSeparator.Visibility = Visibility.Visible;
                 foreach (var recentProjectFile in welcomeScreen.RecentProjects)
@@ -312,11 +316,19 @@ namespace StructuredLogViewer
                     menuItem.Click += RecentProjectClick;
                     RecentProjectsMenu.Items.Add(menuItem);
                 }
+
+                var clearHistory = new MenuItem { Header = "Clear Recent Projects" };
+                clearHistory.Click += ClearRecentProjects;
+                RecentProjectsMenu.Items.Add(clearHistory);
+            }
+            else
+            {
+                RecentProjectsMenu.Visibility = Visibility.Collapsed;
             }
 
+            RecentLogsMenu.Items.Clear();
             if (welcomeScreen.ShowRecentLogs)
             {
-                RecentLogsMenu.Items.Clear();
                 RecentLogsMenu.Visibility = Visibility.Visible;
                 RecentItemsSeparator.Visibility = Visibility.Visible;
                 foreach (var recentLog in welcomeScreen.RecentLogs)
@@ -325,6 +337,14 @@ namespace StructuredLogViewer
                     menuItem.Click += RecentLogFileClick;
                     RecentLogsMenu.Items.Add(menuItem);
                 }
+
+                var clearHistory = new MenuItem { Header = "Clear Recent Logs" };
+                clearHistory.Click += ClearRecentLogFiles;
+                RecentLogsMenu.Items.Add(clearHistory);
+            }
+            else
+            {
+                RecentLogsMenu.Visibility = Visibility.Collapsed;
             }
         }
 
@@ -377,6 +397,38 @@ namespace StructuredLogViewer
             OpenLogFile(Convert.ToString(menuItem.Header));
         }
 
+        private void ClearRecentProjects(object sender, RoutedEventArgs e)
+        {
+            SettingsService.RemoveAllRecentProjects();
+
+            // Re-draw the welcome screen if it is active
+            // or only update the menu
+            if (this.mainContent.Content is WelcomeScreen)
+            {
+                DisplayWelcomeScreen();
+            }
+            else
+            {
+                UpdateRecentItemsMenu();
+            }
+        }
+
+        private void ClearRecentLogFiles(object sender, RoutedEventArgs e)
+        {
+            SettingsService.RemoveAllRecentLogFiles();
+
+            // Re-draw the welcome screen if it is active
+            // or only update the menu
+            if (this.mainContent.Content is WelcomeScreen)
+            {
+                DisplayWelcomeScreen();
+            }
+            else
+            {
+                UpdateRecentItemsMenu();
+            }
+        }
+
         private async void OpenLogFile(string filePath)
         {
             if (!File.Exists(filePath))
@@ -418,6 +470,8 @@ namespace StructuredLogViewer
                     return GetErrorBuild(filePath, ex.ToString());
                 }
             });
+            var openTime = stopwatch.Elapsed;
+            stopwatch.Restart();
 
             if (build == null)
             {
@@ -430,16 +484,18 @@ namespace StructuredLogViewer
                 progress.ProgressText = "Analyzing " + filePath + "...";
                 await QueueAnalyzeBuild(build);
             }
+            var analyzingTime = stopwatch.Elapsed;
 
+            stopwatch.Restart();
             progress.ProgressText = "Rendering tree...";
             await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Loaded); // let the progress message be rendered before we block the UI again
+            var renderTime = stopwatch.Elapsed;
 
             DisplayBuild(build);
 
-            var elapsed = stopwatch.Elapsed;
             if (currentBuild != null)
             {
-                currentBuild.UpdateBreadcrumb($"Load time: {elapsed}");
+                currentBuild.UpdateBreadcrumb($"Opening: {Math.Round(openTime.TotalSeconds, 3)}s, Analyzing: {Math.Round(analyzingTime.TotalSeconds, 3)}s");
             }
         }
 

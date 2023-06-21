@@ -5,9 +5,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using Microsoft.Build.Collections;
-using Microsoft.Build.Execution;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Framework.Profiler;
 
@@ -22,13 +20,16 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
         private readonly ConcurrentDictionary<int, Project> _projectIdToProjectMap = new ConcurrentDictionary<int, Project>();
 
-        private readonly ConcurrentDictionary<string, string> _taskToAssemblyMap =
-            new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _taskToAssemblyMap =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         private readonly object syncLock = new object();
 
         private readonly MessageProcessor messageProcessor;
         private readonly StringCache stringTable;
+
+        private System.Threading.Tasks.Task bgWorker;
+        private BlockingCollection<System.Threading.Tasks.Task> bgJobPool;
 
         public StringCache StringTable => stringTable;
 
@@ -68,6 +69,23 @@ namespace Microsoft.Build.Logging.StructuredLogger
             Intern(nameof(Target));
             Intern(nameof(Task));
             Intern(nameof(TimedNode));
+
+            bgJobPool = new(2000);
+            bgWorker = new System.Threading.Tasks.Task(() =>
+            {
+                System.Threading.Tasks.Parallel.ForEach(bgJobPool.GetConsumingEnumerable(), task =>
+                {
+                    task.Start();
+                    task.Wait();
+                });
+            }, System.Threading.Tasks.TaskCreationOptions.LongRunning);
+            bgWorker.Start();
+        }
+
+        public void Shutdown()
+        {
+            bgJobPool.CompleteAdding();
+            bgWorker.Wait();
         }
 
         private string Intern(string text) => stringTable.Intern(text);
@@ -505,13 +523,35 @@ namespace Microsoft.Build.Logging.StructuredLogger
                             ConstructProfilerResult(projectEvaluation, profilerResult.Value);
                         }
 
+                        // Pre-create folder before starting the fill on the background thread.
+                        Folder globFolder = null;
+                        Folder itemsNode = null;
+                        Folder propertiesFolder = null;
                         if (projectEvaluationFinished.GlobalProperties != null)
                         {
-                            AddGlobalProperties(projectEvaluation, projectEvaluationFinished.GlobalProperties);
+                            globFolder = GetOrCreateGlobalPropertiesFolder(projectEvaluation, projectEvaluationFinished.GlobalProperties);
                         }
 
-                        AddProperties(projectEvaluation, projectEvaluationFinished.Properties);
-                        AddItems(projectEvaluation, projectEvaluationFinished.Items);
+                        if (projectEvaluationFinished.Items != null)
+                        {
+                            itemsNode = projectEvaluation.GetOrCreateNodeWithName<Folder>(Strings.Items, addAtBeginning: true);
+                        }
+
+                        if (projectEvaluationFinished.Properties != null)
+                        {
+                            propertiesFolder = projectEvaluation.GetOrCreateNodeWithName<Folder>(Strings.Properties, addAtBeginning: true);
+                        }
+
+                        bgJobPool.Add(new System.Threading.Tasks.Task(() =>
+                        {
+                            if (projectEvaluationFinished.GlobalProperties != null && globFolder != null)
+                            {
+                                AddProperties(globFolder, (IEnumerable<KeyValuePair<string, string>>)projectEvaluationFinished.GlobalProperties, projectEvaluation);
+                            }
+
+                            AddProperties(propertiesFolder, projectEvaluation, projectEvaluationFinished.Properties);
+                            AddItems(itemsNode, projectEvaluation, projectEvaluationFinished.Items);
+                        }));
                     }
                 }
             }
@@ -828,18 +868,46 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
                 project.GlobalProperties = stringTable.InternStringDictionary(args.GlobalProperties) ?? ImmutableDictionary<string, string>.Empty;
 
+                // Pre-create folder before starting the fill on the background thread.
+                Folder globalNode = null;
                 if (args.GlobalProperties != null)
                 {
-                    AddGlobalProperties(project, project.GlobalProperties);
+                    globalNode = GetOrCreateGlobalPropertiesFolder(project, project.GlobalProperties);
                 }
 
+                Folder targetsNode = null;
+                Folder itemFolder = null;
+                Folder propertyFolder = null;
                 if (!string.IsNullOrEmpty(args.TargetNames))
                 {
-                    AddEntryTargets(project);
+                    targetsNode = project.GetOrCreateNodeWithName<Folder>(Strings.EntryTargets);
                 }
 
-                AddProperties(project, args.Properties);
-                AddItems(project, args.Items);
+                if (args.Items != null)
+                {
+                    itemFolder = project.GetOrCreateNodeWithName<Folder>(Strings.Items, addAtBeginning: true);
+                }
+
+                if (args.Properties != null)
+                {
+                    propertyFolder = project.GetOrCreateNodeWithName<Folder>(Strings.Properties, addAtBeginning: true);
+                }
+
+                bgJobPool.Add(new System.Threading.Tasks.Task(() =>
+                {
+                    if (args.GlobalProperties != null && globalNode != null)
+                    {
+                        AddProperties(globalNode, args.GlobalProperties, project);
+                    }
+
+                    if (!string.IsNullOrEmpty(args.TargetNames))
+                    {
+                        AddEntryTargets(targetsNode, project);
+                    }
+
+                    AddProperties(propertyFolder, project, args.Properties);
+                    AddItems(itemFolder, project, args.Items);
+                }));
             }
         }
 
@@ -897,14 +965,13 @@ namespace Microsoft.Build.Logging.StructuredLogger
             }
         }
 
-        private void AddItems(TreeNode parent, IEnumerable itemList)
+        private void AddItems(Folder itemsNode, TreeNode parent, IEnumerable itemList)
         {
             if (itemList == null)
             {
                 return;
             }
 
-            var itemsNode = parent.GetOrCreateNodeWithName<Folder>(Strings.Items, addAtBeginning: true);
             foreach (DictionaryEntry kvp in itemList)
             {
                 var itemType = SoftIntern(Convert.ToString(kvp.Key));
@@ -923,14 +990,13 @@ namespace Microsoft.Build.Logging.StructuredLogger
             itemsNode.SortChildren();
         }
 
-        private void AddProperties(TreeNode project, IEnumerable properties)
+        private void AddProperties(Folder propertiesFolder, TreeNode project, IEnumerable properties)
         {
             if (properties == null)
             {
                 return;
             }
 
-            var propertiesFolder = project.GetOrCreateNodeWithName<Folder>(Strings.Properties, addAtBeginning: true);
             var list = (IEnumerable<KeyValuePair<string, string>>)properties;
 
             AddProperties(
@@ -1003,8 +1069,10 @@ namespace Microsoft.Build.Logging.StructuredLogger
         /// <returns>The assembly location for the task.</returns>
         public string GetTaskAssembly(string taskName)
         {
-            string assembly;
-            return _taskToAssemblyMap.TryGetValue(taskName, out assembly) ? assembly : string.Empty;
+            lock (_taskToAssemblyMap)
+            {
+                return _taskToAssemblyMap.TryGetValue(taskName, out string assembly) ? assembly : string.Empty;
+            }
         }
 
         /// <summary>
@@ -1014,24 +1082,30 @@ namespace Microsoft.Build.Logging.StructuredLogger
         /// <param name="assembly">The assembly location.</param>
         public void SetTaskAssembly(string taskName, string assembly)
         {
-            _taskToAssemblyMap.GetOrAdd(taskName, t => assembly);
+            lock (_taskToAssemblyMap)
+            {
+                // Important to overwrite because the Using task ... message is usually logged immediately before the TaskStarted
+                // so need to make sure we remember the last assembly used for this task
+                // see issue https://github.com/KirillOsenkov/MSBuildStructuredLog/issues/669
+                _taskToAssemblyMap[taskName] = assembly;
+            }
         }
 
-        private void AddGlobalProperties(TreeNode project, IEnumerable globalProperties)
+        private Folder GetOrCreateGlobalPropertiesFolder(TreeNode project, IEnumerable globalProperties)
         {
             if (globalProperties == null)
             {
-                return;
+                return null;
             }
 
             var propertiesNode = project.GetOrCreateNodeWithName<Folder>(Strings.Properties, addAtBeginning: true);
             var globalNode = propertiesNode.GetOrCreateNodeWithName<Folder>(Strings.Global, addAtBeginning: true);
-            AddProperties(globalNode, (IEnumerable<KeyValuePair<string, string>>)globalProperties, project as IProjectOrEvaluation);
+
+            return globalNode;
         }
 
-        private static void AddEntryTargets(Project project)
+        private static void AddEntryTargets(Folder targetsNode, Project project)
         {
-            var targetsNode = project.GetOrCreateNodeWithName<Folder>(Strings.EntryTargets);
             var entryTargets = project.EntryTargets;
             if (entryTargets != null)
             {
@@ -1058,6 +1132,10 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 parent.EnsureChildrenCapacity(collection.Count);
             }
 
+            bool tfvFound = false;
+            bool platformFound = false;
+            bool configFound = false;
+
             foreach (var kvp in properties)
             {
                 var property = new Property
@@ -1065,39 +1143,44 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     Name = SoftIntern(kvp.Key),
                     Value = SoftIntern(kvp.Value)
                 };
+
                 parent.Children.Add(property); // don't use AddChild for performance
                 property.Parent = parent;
 
                 if (project != null)
                 {
-                    if (string.Equals(kvp.Key, Strings.TargetFramework, StringComparison.OrdinalIgnoreCase))
+
+                    if (!tfvFound && string.Equals(kvp.Key, Strings.TargetFramework, StringComparison.OrdinalIgnoreCase))
                     {
                         project.TargetFramework = kvp.Value;
+                        tfvFound = true;
                     }
-                    else if (string.Equals(kvp.Key, Strings.TargetFrameworks, StringComparison.OrdinalIgnoreCase))
+                    else if (!tfvFound && string.Equals(kvp.Key, Strings.TargetFrameworks, StringComparison.OrdinalIgnoreCase))
                     {
                         // we want TargetFramework to take precedence over TargetFrameworks when both are present
                         if (string.IsNullOrEmpty(project.TargetFramework) && !string.IsNullOrEmpty(kvp.Value))
                         {
                             project.TargetFramework = kvp.Value;
+                            tfvFound = true;
                         }
                     }
                     // If neither of the above are there - look for the old project system
-                    else if (project.TargetFramework is null && string.Equals(kvp.Key, Strings.TargetFrameworkVersion, StringComparison.OrdinalIgnoreCase))
+                    else if (!tfvFound && project.TargetFramework is null && string.Equals(kvp.Key, Strings.TargetFrameworkVersion, StringComparison.OrdinalIgnoreCase))
                     {
                         // Note this is untranslated, so e.g. "v4.6.2" instead of "net462" - this is intentional as it
                         // renders the badge for all projects, but you can still use this difference to tell what is/isn't an SDK project.
                         project.TargetFramework = kvp.Value;
+                        tfvFound = true;
                     }
-
-                    if (string.Equals(kvp.Key, Strings.Platform, StringComparison.OrdinalIgnoreCase))
+                    else if (!platformFound && string.Equals(kvp.Key, Strings.Platform, StringComparison.OrdinalIgnoreCase))
                     {
                         project.Platform = kvp.Value;
+                        platformFound = true;
                     }
-
-                    if (string.Equals(kvp.Key, Strings.Configuration, StringComparison.OrdinalIgnoreCase))
+                    else if (!configFound && string.Equals(kvp.Key, Strings.Configuration, StringComparison.OrdinalIgnoreCase))
                     {
                         project.Configuration = kvp.Value;
+                        configFound = true;
                     }
                 }
             }

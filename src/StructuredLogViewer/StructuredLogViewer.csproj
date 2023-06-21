@@ -1,7 +1,7 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>net472;net6.0-windows</TargetFrameworks>
+    <TargetFrameworks>net472;net7.0-windows</TargetFrameworks>
     <OutputType>WinExe</OutputType>
     <UseWPF>true</UseWPF>
     <ImportWindowsDesktopTargets>true</ImportWindowsDesktopTargets>
@@ -22,12 +22,11 @@
     <PackageReference Include="AdonisUI.ClassicTheme" Version="1.16.0" />
     <PackageReference Include="AvalonEdit" Version="6.0.1" />
     <PackageReference Include="Microsoft.Build.Locator" Version="1.4.1" ExcludeAssets="build" />
+    <PackageReference Include="Microsoft.Build.Tasks.Core" Version="$(MSBuildPackageVersion)" />
     <PackageReference Include="Mono.Cecil" Version="0.9.6.1" />
     <PackageReference Include="Nerdbank.GitVersioning" Version="$(NuGetVersionNerdbankGitVersioning)" PrivateAssets="all" />
     <PackageReference Include="squirrel.windows" Version="1.4.4" GeneratePathProperty="true" />
-    <PackageReference Include="System.ValueTuple" Version="4.5.0" />
-    <PackageReference Include="System.IO.Compression" Version="4.3.0" />
-    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.0" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.0" PrivateAssets="all" />
     <PackageReference Include="AutomaticGraphLayout.WpfGraphControl" Version="1.1.11" />
   </ItemGroup>
 
@@ -47,7 +46,7 @@
 
   <Target Name="CopyTaskRunnerDll" BeforeTargets="GetCopyToOutputDirectoryItems" Condition="$(TargetFramework) == 'net472'">
     <PropertyGroup>
-      <CoreTaskRunnerOutDir>$([System.IO.Path]::GetFullPath(`$(OutDir)\..\..\..\TaskRunner\$(Configuration)\net6.0`))\</CoreTaskRunnerOutDir>
+      <CoreTaskRunnerOutDir>$([System.IO.Path]::GetFullPath(`$(OutDir)\..\..\..\TaskRunner\$(Configuration)\net7.0`))\</CoreTaskRunnerOutDir>
     </PropertyGroup>
     <ItemGroup>
       <TaskRunnerFile Include="$(CoreTaskRunnerOutDir)TaskRunner.dll" />
@@ -110,7 +109,7 @@
           DependsOnTargets="ExtractVersion"
           Inputs="@(ChocolateyInput)"
           Outputs="$(ChocolateyNupkgPath)">
-    <Exec Command="C:\ProgramData\chocolatey\choco.exe Pack &quot;$(ChocolateyNuspecPath)&quot; -OutputDirectory $(OutDir) currentVersion=$(Version) outdir=$(OutDir)" />
+    <Exec Command="C:\ProgramData\chocolatey\choco.exe Pack &quot;$(ChocolateyNuspecPath)&quot; -OutputDirectory $(OutDir) --version=$(Version) outdir=$(OutDir)" />
   </Target>
 
   <Target Name="SquirrelReleasify"
