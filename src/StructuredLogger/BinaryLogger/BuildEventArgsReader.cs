@@ -386,7 +386,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 message = GetTargetSkippedMessage(skipReason, targetName, condition, evaluatedCondition, originallySucceeded);
             }
 
-            var e = new TargetSkippedEventArgs2(
+            var e = new TargetSkippedEventArgs(
                 message);
 
             SetCommonFields(e, fields);
@@ -683,21 +683,50 @@ namespace Microsoft.Build.Logging.StructuredLogger
             var fields = ReadBuildEventArgsFields();
             ReadDiagnosticFields(fields);
 
-            var e = new BuildErrorEventArgs(
-                fields.Subcategory,
-                fields.Code,
-                fields.File,
-                fields.LineNumber,
-                fields.ColumnNumber,
-                fields.EndLineNumber,
-                fields.EndColumnNumber,
-                fields.Message,
-                fields.HelpKeyword,
-                fields.SenderName,
-                fields.Timestamp,
-                fields.Arguments);
+            BuildEventArgs e;
+            if (fields.Extended == null)
+            {
+                e = new BuildErrorEventArgs(
+                    fields.Subcategory,
+                    fields.Code,
+                    fields.File,
+                    fields.LineNumber,
+                    fields.ColumnNumber,
+                    fields.EndLineNumber,
+                    fields.EndColumnNumber,
+                    fields.Message,
+                    fields.HelpKeyword,
+                    fields.SenderName,
+                    fields.Timestamp,
+                    fields.Arguments)
+                {
+                    ProjectFile = fields.ProjectFile
+                };
+            }
+            else
+            {
+                e = new ExtendedBuildErrorEventArgs(
+                    fields.Extended.ExtendedType,
+                    fields.Subcategory,
+                    fields.Code,
+                    fields.File,
+                    fields.LineNumber,
+                    fields.ColumnNumber,
+                    fields.EndLineNumber,
+                    fields.EndColumnNumber,
+                    fields.Message,
+                    fields.HelpKeyword,
+                    fields.SenderName,
+                    fields.Timestamp,
+                    fields.Arguments)
+                {
+                    ProjectFile = fields.ProjectFile,
+                    ExtendedMetadata = fields.Extended.ExtendedMetadata,
+                    ExtendedData = fields.Extended.ExtendedData,
+                };
+            }
             e.BuildEventContext = fields.BuildEventContext;
-            e.ProjectFile = fields.ProjectFile;
+
             return e;
         }
 
@@ -706,21 +735,50 @@ namespace Microsoft.Build.Logging.StructuredLogger
             var fields = ReadBuildEventArgsFields();
             ReadDiagnosticFields(fields);
 
-            var e = new BuildWarningEventArgs(
-                fields.Subcategory,
-                fields.Code,
-                fields.File,
-                fields.LineNumber,
-                fields.ColumnNumber,
-                fields.EndLineNumber,
-                fields.EndColumnNumber,
-                fields.Message,
-                fields.HelpKeyword,
-                fields.SenderName,
-                fields.Timestamp,
-                fields.Arguments);
+            BuildEventArgs e;
+            if (fields.Extended == null)
+            {
+                e = new BuildWarningEventArgs(
+                    fields.Subcategory,
+                    fields.Code,
+                    fields.File,
+                    fields.LineNumber,
+                    fields.ColumnNumber,
+                    fields.EndLineNumber,
+                    fields.EndColumnNumber,
+                    fields.Message,
+                    fields.HelpKeyword,
+                    fields.SenderName,
+                    fields.Timestamp,
+                    fields.Arguments)
+                {
+                    ProjectFile = fields.ProjectFile
+                };
+            }
+            else
+            {
+                e = new ExtendedBuildWarningEventArgs(
+                    fields.Extended.ExtendedType,
+                    fields.Subcategory,
+                    fields.Code,
+                    fields.File,
+                    fields.LineNumber,
+                    fields.ColumnNumber,
+                    fields.EndLineNumber,
+                    fields.EndColumnNumber,
+                    fields.Message,
+                    fields.HelpKeyword,
+                    fields.SenderName,
+                    fields.Timestamp,
+                    fields.Arguments)
+                {
+                    ProjectFile = fields.ProjectFile,
+                    ExtendedMetadata = fields.Extended.ExtendedMetadata,
+                    ExtendedData = fields.Extended.ExtendedData,
+                };
+            }
             e.BuildEventContext = fields.BuildEventContext;
-            e.ProjectFile = fields.ProjectFile;
+
             return e;
         }
 
@@ -728,22 +786,53 @@ namespace Microsoft.Build.Logging.StructuredLogger
         {
             var fields = ReadBuildEventArgsFields(readImportance: true);
 
-            var e = new BuildMessageEventArgs(
-                fields.Subcategory,
-                fields.Code,
-                fields.File,
-                fields.LineNumber,
-                fields.ColumnNumber,
-                fields.EndLineNumber,
-                fields.EndColumnNumber,
-                fields.Message,
-                fields.HelpKeyword,
-                fields.SenderName,
-                fields.Importance,
-                fields.Timestamp,
-                fields.Arguments);
+            BuildEventArgs e;
+            if (fields.Extended == null)
+            {
+                e = new BuildMessageEventArgs(
+                    fields.Subcategory,
+                    fields.Code,
+                    fields.File,
+                    fields.LineNumber,
+                    fields.ColumnNumber,
+                    fields.EndLineNumber,
+                    fields.EndColumnNumber,
+                    fields.Message,
+                    fields.HelpKeyword,
+                    fields.SenderName,
+                    fields.Importance,
+                    fields.Timestamp,
+                    fields.Arguments)
+                {
+                    ProjectFile = fields.ProjectFile,
+                };
+            }
+            else
+            {
+                e = new ExtendedBuildMessageEventArgs(
+                    fields.Extended?.ExtendedType ?? string.Empty,
+                    fields.Subcategory,
+                    fields.Code,
+                    fields.File,
+                    fields.LineNumber,
+                    fields.ColumnNumber,
+                    fields.EndLineNumber,
+                    fields.EndColumnNumber,
+                    fields.Message,
+                    fields.HelpKeyword,
+                    fields.SenderName,
+                    fields.Importance,
+                    fields.Timestamp,
+                    fields.Arguments)
+                {
+                    ProjectFile = fields.ProjectFile,
+                    ExtendedMetadata = fields.Extended?.ExtendedMetadata,
+                    ExtendedData = fields.Extended?.ExtendedData,
+                };
+            }
+
             e.BuildEventContext = fields.BuildEventContext;
-            e.ProjectFile = fields.ProjectFile;
+
             return e;
         }
 
@@ -939,6 +1028,19 @@ namespace Microsoft.Build.Logging.StructuredLogger
             fields.EndColumnNumber = ReadInt32();
         }
 
+        private ExtendedDataFields? ReadExtendedDataFields()
+        {
+            ExtendedDataFields? fields = null;
+
+            fields = new ExtendedDataFields();
+
+            fields.ExtendedType = ReadOptionalString();
+            fields.ExtendedMetadata = ReadStringDictionary();
+            fields.ExtendedData = ReadOptionalString();
+
+            return fields;
+        }
+
         private BuildEventArgsFields ReadBuildEventArgsFields(bool readImportance = false)
         {
             BuildEventArgsFieldFlags flags = (BuildEventArgsFieldFlags)ReadInt32();
@@ -975,6 +1077,10 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 result.Timestamp = ReadDateTime();
             }
 
+            if ((flags & BuildEventArgsFieldFlags.Extended) != 0)
+            {
+                result.Extended = ReadExtendedDataFields();
+            }
             if ((flags & BuildEventArgsFieldFlags.Subcategory) != 0)
             {
                 result.Subcategory = ReadDeduplicatedString();
@@ -1396,7 +1502,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
             public StringStorage()
             {
-                if (!Environment.Is64BitProcess)
+                if (!Environment.Is64BitProcess && PlatformUtilities.HasTempStorage)
                 {
                     filePath = Path.GetTempFileName();
                     var utf8noBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
@@ -1495,7 +1601,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 }
                 catch
                 {
-                    // The StringStorage class is not crucial for other functionality and if 
+                    // The StringStorage class is not crucial for other functionality and if
                     // there are exceptions when closing the temp file, it's too late to do anything about it.
                     // Since we don't want to disrupt anything and the file is in the TEMP directory, it will
                     // get cleaned up at some point anyway.

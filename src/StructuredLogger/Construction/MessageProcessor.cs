@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Text;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Internal;
@@ -459,7 +460,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     var targetName = Intern(TextUtilities.ParseQuotedSubstring(message));
                     if (targetName != null)
                     {
-                        var args2 = new TargetSkippedEventArgs2(message);
+                        var args2 = new TargetSkippedEventArgs(message);
                         args2.TargetName = targetName;
                         args2.BuildEventContext = args.BuildEventContext;
                         args2.SkipReason = targetSkipReason;
@@ -612,11 +613,15 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 }
                 else
                 {
-                    nodeToAdd = new Message
+                    var messageNode = new Message
                     {
                         Text = message,
                         IsLowRelevance = lowRelevance
                     };
+
+                    Construction.PopulateWithExtendedData(messageNode, args);
+
+                    nodeToAdd = messageNode;
                 }
             }
 
