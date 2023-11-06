@@ -1,8 +1,8 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Internal;
 
@@ -12,6 +12,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
     {
         private readonly Construction construction;
         private readonly StringCache stringTable;
+        private int fileFormatVersion = 0;
 
         public StringBuilder DetailedSummary { get; } = new StringBuilder();
 
@@ -30,6 +31,11 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 return;
             }
 
+            if (fileFormatVersion == 0)
+            {
+                fileFormatVersion = construction.Build.FileFormatVersion;
+            }
+
             if (args is TaskParameterEventArgs taskParameter)
             {
                 ProcessTaskParameter(taskParameter);
@@ -40,8 +46,17 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 ProcessProjectImported(projectImported);
                 return;
             }
+            else if (args is TaskCommandLineEventArgs taskArgs)
+            {
+                if (AddCommandLine(taskArgs))
+                {
+                    return;
+                }
+            }
 
-            var message = args.Message;
+            // This realizes the expensive message string from LazyFormattedBuildEventArgs
+            string message = args.Message;
+
             if (string.IsNullOrEmpty(message))
             {
                 return;
@@ -50,7 +65,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
             var buildEventContext = args.BuildEventContext;
             if (buildEventContext != null && buildEventContext.TaskId != BuildEventContext.InvalidTaskId)
             {
-                if (message.StartsWith(Strings.OutputItemsMessagePrefix, StringComparison.Ordinal))
+                if (fileFormatVersion < 11 && message.StartsWith(Strings.OutputItemsMessagePrefix, StringComparison.Ordinal))
                 {
                     var task = GetTask(args);
 
@@ -86,27 +101,23 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     folder.AddChild(parameter);
                     return;
                 }
-
-                if (args is TaskCommandLineEventArgs taskArgs)
-                {
-                    if (AddCommandLine(taskArgs))
-                    {
-                        return;
-                    }
-                }
             }
             else if (buildEventContext != null && buildEventContext.TargetId != BuildEventContext.InvalidTargetId)
             {
-                if (message.StartsWith(Strings.ItemGroupIncludeMessagePrefix, StringComparison.Ordinal))
+                // since version 11 these have been replaced with TaskParameterEventArgs
+                if (fileFormatVersion < 11)
                 {
-                    AddItemGroup(args, message, Strings.ItemGroupIncludeMessagePrefix, new AddItem());
-                    return;
-                }
+                    if (message.StartsWith(Strings.ItemGroupIncludeMessagePrefix, StringComparison.Ordinal))
+                    {
+                        AddItemGroup(args, message, Strings.ItemGroupIncludeMessagePrefix, new AddItem());
+                        return;
+                    }
 
-                if (message.StartsWith(Strings.ItemGroupRemoveMessagePrefix, StringComparison.Ordinal))
-                {
-                    AddItemGroup(args, message, Strings.ItemGroupRemoveMessagePrefix, new RemoveItem());
-                    return;
+                    if (message.StartsWith(Strings.ItemGroupRemoveMessagePrefix, StringComparison.Ordinal))
+                    {
+                        AddItemGroup(args, message, Strings.ItemGroupRemoveMessagePrefix, new RemoveItem());
+                        return;
+                    }
                 }
 
                 if (message.StartsWith(Strings.PropertyGroupMessagePrefix, StringComparison.Ordinal))
@@ -115,8 +126,8 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     return;
                 }
 
-                // A task from assembly message (parses out the task name and assembly path).
-                var match = Strings.UsingTask(message);
+                string rawMessage = Reflector.GetMessage(args);
+                var match = Strings.UsingTask(message, rawMessage);
                 if (match.Success)
                 {
                     construction.SetTaskAssembly(
@@ -178,6 +189,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
                 string folderName = isOutput ? Strings.OutputItems : Strings.Parameters;
                 parent = task.GetOrCreateNodeWithName<Folder>(folderName);
+                parent.DisableChildrenCache = true;
 
                 node = CreateParameterNode(itemType, items, isOutput);
             }
@@ -215,6 +227,8 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     {
                         itemType = Strings.Outputs;
                     }
+
+                    named.DisableChildrenCache = true;
                 }
 
                 named.Name = itemType;
@@ -249,6 +263,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
             else
             {
                 parent = new Parameter { Name = itemName };
+                parent.DisableChildrenCache = true;
             }
 
             AddItems(items, parent);
@@ -257,6 +272,18 @@ namespace Microsoft.Build.Logging.StructuredLogger
         }
 
         private void AddItems(IEnumerable items, TreeNode parent)
+        {
+            if (construction.PopulatePropertiesAndItemsInBackground)
+            {
+                System.Threading.Tasks.Task.Run(() => AddItemsCore(items, parent));
+            }
+            else
+            {
+                AddItemsCore(items, parent);
+            }
+        }
+
+        private void AddItemsCore(IEnumerable items, TreeNode parent)
         {
             if (items is ICollection collection)
             {
@@ -465,7 +492,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                         args2.BuildEventContext = args.BuildEventContext;
                         args2.SkipReason = targetSkipReason;
                         args2.OriginallySucceeded = targetSkipReason != TargetSkipReason.PreviouslyBuiltUnsuccessfully;
-                        Reflector.BuildEventArgs_timestamp.SetValue(args2, args.Timestamp);
+                        Reflector.SetTimestamp(args2, args.Timestamp);
                         construction.TargetSkipped(args2);
                         return;
                     }
@@ -482,7 +509,10 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     parent = evaluation;
                 }
 
-                if (args is PropertyReassignmentEventArgs || (message.Contains(Strings.PropertyReassignment) && Strings.PropertyReassignmentRegex.IsMatch(message)))
+                Match match = null;
+                PropertyReassignmentEventArgs propertyReassignment = args as PropertyReassignmentEventArgs;
+                if (propertyReassignment != null ||
+                    ((match = Strings.PropertyReassignmentRegex.Match(message)) != null && match.Success))
                 {
                     TimedNode properties;
                     if (evaluation != null)
@@ -494,16 +524,21 @@ namespace Microsoft.Build.Logging.StructuredLogger
                         properties = parent.GetOrCreateNodeWithName<TimedNode>(Strings.PropertyReassignmentFolder, addAtBeginning: true);
                     }
 
-                    var propertyName = Strings.GetPropertyName(message);
+                    var propertyName = propertyReassignment != null ?
+                        propertyReassignment.PropertyName :
+                        match != null ?
+                            match.Groups["Name"].Value :
+                            Strings.GetPropertyName(message);
+
                     parent = properties.GetOrCreateNodeWithName<Folder>(propertyName);
                 }
-                else if (parent == evaluation && parent.FindChild<Message>(message) != null)
+                else if (parent == evaluation && !evaluation.MessageTexts.Add(message))
                 {
                     // avoid duplicate messages
                     return;
                 }
             }
-            else if (args.Message.StartsWith(Strings.NodesReusal, StringComparison.Ordinal))
+            else if (message.StartsWith(Strings.NodesReusal, StringComparison.Ordinal))
             {
                 parent = construction.Build.GetOrCreateNodeWithName<Folder>(Strings.NodesManagementNode);
             }
@@ -521,7 +556,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
                     parent = construction.EvaluationFolder;
                 }
-                else if (construction.Build.FileFormatVersion < 9 && message.Contains(Strings.PropertyReassignment) && Strings.PropertyReassignmentRegex.IsMatch(message))
+                else if (construction.Build.FileFormatVersion < 9 && Strings.PropertyReassignmentRegex.IsMatch(message))
                 {
                     if (!evaluationMessagesAlreadySeen.Add(message))
                     {
@@ -600,6 +635,8 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     critical.ProjectFile = Intern(criticalArgs.ProjectFile);
                     critical.Subcategory = Intern(criticalArgs.Subcategory);
 
+                    Construction.PopulateWithExtendedData(critical, args);
+
                     nodeToAdd = critical;
                 }
                 else if (parent is Task task && task is CppAnalyzer.CppTask)
@@ -613,11 +650,34 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 }
                 else
                 {
-                    var messageNode = new Message
+                    Message messageNode = null;
+                    string text = message;
+
+                    if (args is BuildMessageEventArgs buildMessageEventArgs)
                     {
-                        Text = message,
-                        IsLowRelevance = lowRelevance
-                    };
+                        if (!string.IsNullOrEmpty(buildMessageEventArgs.Code))
+                        {
+                            text = $"{buildMessageEventArgs.Code}: {text}";
+                            Intern(text);
+                        }
+
+                        if (!string.IsNullOrEmpty(buildMessageEventArgs.File))
+                        {
+                            messageNode = new MessageWithLocation
+                            {
+                                FilePath = buildMessageEventArgs.File,
+                                Line = buildMessageEventArgs.LineNumber
+                            };
+                        }
+                    }
+
+                    if (messageNode == null)
+                    {
+                        messageNode = new Message();
+                    }
+
+                    messageNode.Text = text;
+                    messageNode.IsLowRelevance = lowRelevance;
 
                     Construction.PopulateWithExtendedData(messageNode, args);
 

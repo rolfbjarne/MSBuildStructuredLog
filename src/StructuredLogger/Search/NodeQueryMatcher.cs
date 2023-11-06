@@ -95,6 +95,7 @@ namespace StructuredLogViewer
         public bool IncludeEnd { get; set; }
         public TimeSpan PrecalculationDuration { get; set; }
         public bool UnderProject { get; set; } = false;
+        public bool IsCopy { get; set; }
 
         private Term nameToSearch { get; set; }
         private Term valueToSearch { get; set; }
@@ -172,6 +173,11 @@ namespace StructuredLogViewer
                 {
                     Words.RemoveAt(i);
                     TypeKeyword = word.Substring(1).ToLowerInvariant();
+                    if (string.Equals(TypeKeyword, "copy", StringComparison.OrdinalIgnoreCase))
+                    {
+                        IsCopy = true;
+                    }
+
                     continue;
                 }
 
@@ -231,6 +237,11 @@ namespace StructuredLogViewer
 
                     continue;
                 }
+            }
+
+            if (IsCopy)
+            {
+                return;
             }
 
             PrecomputeMatchesInStrings(stringTable, cancellationToken);
@@ -427,13 +438,13 @@ namespace StructuredLogViewer
                             searchFields[count++] = evaluation.EvaluationText;
                         }
                     }
-                    else if (node is Target target)
-                    {
-                        if (!string.IsNullOrEmpty(target.ParentTarget))
-                        {
-                            searchFields[count++] = target.ParentTarget;
-                        }
-                    }
+                    //else if (node is Target target)
+                    //{
+                    //    if (!string.IsNullOrEmpty(target.ParentTarget))
+                    //    {
+                    //        searchFields[count++] = target.ParentTarget;
+                    //    }
+                    //}
                 }
             }
 

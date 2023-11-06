@@ -127,10 +127,15 @@ namespace StructuredLogViewer.Avalonia.Controls
 
             Build = build;
 
+            // first try to see if the source archive was embedded in the log
             if (build.SourceFilesArchive != null)
             {
-                // first try to see if the source archive was embedded in the log
-                sourceFileResolver = new SourceFileResolver(build.SourceFiles.Values);
+                var files = Build.ReadSourceFiles(build.SourceFilesArchive);
+
+                // release the large array since it's no longer necessary
+                build.SourceFilesArchive = null;
+
+                sourceFileResolver = new SourceFileResolver(files);
             }
             else
             {
@@ -849,7 +854,7 @@ Recent:
 
             if (!Build.Succeeded)
             {
-                var firstError = Build.FindFirstInSubtreeIncludingSelf<Error>();
+                var firstError = Build.FirstError;
                 if (firstError != null)
                 {
                     SelectItem(firstError);
@@ -1046,6 +1051,11 @@ Recent:
                 {
                     sb.AppendLine();
                 }
+
+                if (sb.Length > Microsoft.Build.Logging.StructuredLogger.StringWriter.MaxStringLength)
+                {
+                    break;
+                }
             }
 
             CopyToClipboard(sb.ToString());
@@ -1064,6 +1074,11 @@ Recent:
             {
                 item.VisitAllChildren<BaseNode>(s =>
                 {
+                    if (sb.Length > Microsoft.Build.Logging.StructuredLogger.StringWriter.MaxStringLength)
+                    {
+                        return;
+                    }
+
                     if (s is SourceFile file && !string.IsNullOrEmpty(file.SourceFilePath))
                     {
                         sb.AppendLine(file.SourceFilePath);

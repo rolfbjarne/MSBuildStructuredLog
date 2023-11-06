@@ -31,10 +31,14 @@ namespace Microsoft.Build.Logging.StructuredLogger
         private System.Threading.Tasks.Task bgWorker;
         private BlockingCollection<System.Threading.Tasks.Task> bgJobPool;
 
+        internal bool PopulatePropertiesAndItemsInBackground = PlatformUtilities.HasThreads;
+
         public StringCache StringTable => stringTable;
 
         public NamedNode EvaluationFolder => Build.EvaluationFolder;
         public NamedNode EnvironmentFolder => Build.EnvironmentFolder;
+
+        public bool IsLargeBinlog { get; set; }
 
         public Construction()
         {
@@ -45,11 +49,17 @@ namespace Microsoft.Build.Logging.StructuredLogger
             Intern(Strings.Assembly);
             Intern(Strings.CommandLineArguments);
             Intern(Strings.DoubleWrites);
+            Intern(Strings.Errors);
             Intern(Strings.Evaluation);
+            Intern(Strings.NoImportEmptyExpression);
+            Intern(Strings.NoImportNoMatches);
+            Intern(Strings.NoImportMissingFile);
+            Intern(Strings.NoImportInvalidFile);
             Intern(Strings.Note);
             Intern(Strings.OutputItems);
             Intern(Strings.Parameters);
             Intern(Strings.Properties);
+            Intern(Strings.TargetOutputs);
             Intern(Strings.UnusedLocations);
             Intern(Strings.Warnings);
             Intern(nameof(AddItem));
@@ -69,29 +79,10 @@ namespace Microsoft.Build.Logging.StructuredLogger
             Intern(nameof(Target));
             Intern(nameof(Task));
             Intern(nameof(TimedNode));
-
-            if (PlatformUtilities.HasThreads)
-            {
-                bgJobPool = new(2000);
-                bgWorker = new System.Threading.Tasks.Task(() =>
-                {
-                    System.Threading.Tasks.Parallel.ForEach(bgJobPool.GetConsumingEnumerable(), task =>
-                    {
-                        task.Start();
-                        task.Wait();
-                    });
-                }, System.Threading.Tasks.TaskCreationOptions.LongRunning);
-                bgWorker.Start();
-            }
         }
 
         public void Shutdown()
         {
-            if (PlatformUtilities.HasThreads)
-            {
-                bgJobPool.CompleteAdding();
-                bgWorker.Wait();
-            }
         }
 
         private string Intern(string text) => stringTable.Intern(text);
@@ -293,18 +284,42 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
                     if (args.TargetOutputs != null)
                     {
-                        var targetOutputsFolder = target.GetOrCreateNodeWithName<Folder>(Intern(Strings.TargetOutputs));
+                        var targetOutputsFolder = target.GetOrCreateNodeWithName<Folder>(Strings.TargetOutputs);
+                        targetOutputsFolder.DisableChildrenCache = true;
 
                         foreach (ITaskItem targetOutput in args.TargetOutputs)
                         {
                             var item = new Item();
-                            item.Text = Intern(targetOutput.ItemSpec);
-                            foreach (DictionaryEntry metadata in targetOutput.CloneCustomMetadata())
+                            item.Text = SoftIntern(targetOutput.ItemSpec);
+
+                            var metadataArray = targetOutput.CloneCustomMetadata();
+                            if (metadataArray.Count > 0)
                             {
-                                var metadataNode = new Metadata();
-                                metadataNode.Name = Intern(Convert.ToString(metadata.Key));
-                                metadataNode.Value = Intern(Convert.ToString(metadata.Value));
-                                item.AddChild(metadataNode);
+                                if (metadataArray is ArrayDictionary<string, string> array)
+                                {
+                                    foreach (var metadata in array)
+                                    {
+                                        var metadataNode = new Metadata();
+                                        metadataNode.Name = SoftIntern(metadata.Key);
+                                        metadataNode.Value = SoftIntern(metadata.Value);
+                                        item.AddChild(metadataNode);
+                                    }
+                                }
+                                else
+                                {
+                                    // This should be unreachable or legacy scenarios only
+                                    // (someone passing StructuredLogger directly to MSBuild)
+                                    foreach (DictionaryEntry metadata in metadataArray)
+                                    {
+                                        if (metadata.Key is string key && metadata.Value is string value)
+                                        {
+                                            var metadataNode = new Metadata();
+                                            metadataNode.Name = SoftIntern(key);
+                                            metadataNode.Value = SoftIntern(value);
+                                            item.AddChild(metadataNode);
+                                        }
+                                    }
+                                }
                             }
 
                             targetOutputsFolder.AddChild(item);
@@ -536,21 +551,24 @@ namespace Microsoft.Build.Logging.StructuredLogger
                         if (projectEvaluationFinished.GlobalProperties != null)
                         {
                             globFolder = GetOrCreateGlobalPropertiesFolder(projectEvaluation, projectEvaluationFinished.GlobalProperties);
+                            globFolder.DisableChildrenCache = true;
                         }
 
                         if (projectEvaluationFinished.Items != null)
                         {
                             itemsNode = projectEvaluation.GetOrCreateNodeWithName<Folder>(Strings.Items, addAtBeginning: true);
+                            itemsNode.DisableChildrenCache = true;
                         }
 
                         if (projectEvaluationFinished.Properties != null)
                         {
                             propertiesFolder = projectEvaluation.GetOrCreateNodeWithName<Folder>(Strings.Properties, addAtBeginning: true);
+                            propertiesFolder.DisableChildrenCache = true;
                         }
 
-                        if (PlatformUtilities.HasThreads)
+                        if (PopulatePropertiesAndItemsInBackground)
                         {
-                            bgJobPool.Add(new System.Threading.Tasks.Task(AddGlobalProperties));
+                            System.Threading.Tasks.Task.Run(() => AddGlobalProperties());
                         }
                         else
                         {
@@ -565,7 +583,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                             }
 
                             AddPropertiesSorted(propertiesFolder, projectEvaluation, projectEvaluationFinished.Properties);
-                            AddItems(itemsNode, projectEvaluation, projectEvaluationFinished.Items);
+                            AddItems(itemsNode, projectEvaluationFinished.Items);
                         }
                     }
                 }
@@ -742,10 +760,15 @@ namespace Microsoft.Build.Logging.StructuredLogger
                         parent = Build;
                     }
 
-                    var errors = parent.GetOrCreateNodeWithName<Folder>(Intern("Errors"));
+                    var errors = parent.GetOrCreateNodeWithName<Folder>(Strings.Errors);
                     var error = new Error();
                     Populate(error, args);
                     errors.AddChild(error);
+
+                    if (Build.FirstError == null)
+                    {
+                        Build.FirstError = error;
+                    }
                 }
             }
             catch (Exception ex)
@@ -941,6 +964,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 if (args.GlobalProperties != null)
                 {
                     globalNode = GetOrCreateGlobalPropertiesFolder(project, project.GlobalProperties);
+                    globalNode.DisableChildrenCache = true;
                 }
 
                 Folder targetsNode = null;
@@ -949,21 +973,24 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 if (!string.IsNullOrEmpty(args.TargetNames))
                 {
                     targetsNode = project.GetOrCreateNodeWithName<Folder>(Strings.EntryTargets);
+                    targetsNode.DisableChildrenCache = true;
                 }
 
                 if (args.Items != null)
                 {
                     itemFolder = project.GetOrCreateNodeWithName<Folder>(Strings.Items, addAtBeginning: true);
+                    itemFolder.DisableChildrenCache = true;
                 }
 
                 if (args.Properties != null)
                 {
                     propertyFolder = project.GetOrCreateNodeWithName<Folder>(Strings.Properties, addAtBeginning: true);
+                    propertyFolder.DisableChildrenCache = true;
                 }
 
-                if (PlatformUtilities.HasThreads)
+                if (PopulatePropertiesAndItemsInBackground)
                 {
-                    bgJobPool.Add(new System.Threading.Tasks.Task(AddGlobalProperties));
+                    System.Threading.Tasks.Task.Run(() => AddGlobalProperties());
                 }
                 else
                 {
@@ -983,7 +1010,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     }
 
                     AddPropertiesSorted(propertyFolder, project, args.Properties);
-                    AddItems(itemFolder, project, args.Items);
+                    AddItems(itemFolder, args.Items);
                 }
             }
         }
@@ -1025,7 +1052,13 @@ namespace Microsoft.Build.Logging.StructuredLogger
             {
                 if (cloned is ICollection collection)
                 {
-                    itemNode.EnsureChildrenCapacity(collection.Count);
+                    int count = collection.Count;
+                    if (count == 0)
+                    {
+                        return;
+                    }
+
+                    itemNode.EnsureChildrenCapacity(count);
                 }
 
                 foreach (DictionaryEntry metadataName in cloned)
@@ -1042,17 +1075,26 @@ namespace Microsoft.Build.Logging.StructuredLogger
             }
         }
 
-        private void AddItems(Folder itemsNode, TreeNode parent, IEnumerable itemList)
+        public void AddItems(Folder itemsNode, IEnumerable itemList)
         {
             if (itemList == null)
             {
                 return;
             }
 
-            foreach (DictionaryEntry kvp in itemList)
+            IEnumerable<DictionaryEntry> entries = itemList as IEnumerable<DictionaryEntry> ??
+                itemList.Cast<DictionaryEntry>(); // this should be unreachable
+
+            AddItem currentItemNode = null;
+
+            foreach (DictionaryEntry kvp in entries)
             {
                 var itemType = SoftIntern(Convert.ToString(kvp.Key));
-                var itemTypeNode = itemsNode.GetOrCreateNodeWithName<AddItem>(itemType);
+
+                if (currentItemNode == null || currentItemNode.Name != itemType)
+                {
+                    currentItemNode = itemsNode.GetOrCreateNodeWithName<AddItem>(itemType);
+                }
 
                 var itemNode = new Item();
 
@@ -1060,11 +1102,14 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 {
                     itemNode.Text = SoftIntern(taskItem.ItemSpec);
                     AddMetadata(taskItem, itemNode);
-                    itemTypeNode.AddChild(itemNode);
+                    currentItemNode.AddChild(itemNode);
                 }
             }
 
-            itemsNode.SortChildren();
+            if (!IsLargeBinlog)
+            {
+                itemsNode.SortChildren();
+            }
         }
 
         private void AddPropertiesSorted(Folder propertiesFolder, TreeNode project, IEnumerable properties)
@@ -1076,10 +1121,24 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
             var list = (ICollection<KeyValuePair<string, string>>)properties;
             int count = list.Count;
+            IEnumerable<KeyValuePair<string, string>> sorted = list;
+
+            if (list is ArrayDictionary<string, string> arrayDictionary)
+            {
+                // don't sort properties for large binlogs, this is very expensive
+                if (!IsLargeBinlog)
+                {
+                    arrayDictionary.Sort();
+                }
+            }
+            else
+            {
+                sorted = list.OrderBy(d => d.Key, StringComparer.OrdinalIgnoreCase);
+            }
 
             AddProperties(
                 propertiesFolder,
-                list.OrderBy(d => d.Key, StringComparer.OrdinalIgnoreCase),
+                sorted,
                 count,
                 project as IProjectOrEvaluation);
         }
@@ -1206,6 +1265,8 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 return;
             }
 
+            parent.DisableChildrenCache = true;
+
             if (count > 0)
             {
                 parent.EnsureChildrenCapacity(count);
@@ -1232,7 +1293,6 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
                 if (project != null)
                 {
-
                     if (!tfvFound && string.Equals(kvp.Key, Strings.TargetFramework, StringComparison.OrdinalIgnoreCase))
                     {
                         project.TargetFramework = kvp.Value;

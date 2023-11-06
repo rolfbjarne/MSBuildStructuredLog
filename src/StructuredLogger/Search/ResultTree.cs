@@ -48,6 +48,17 @@ namespace StructuredLogViewer
             if (includeDuration)
             {
                 results = results.OrderByDescending(r => r.Duration).ToArray();
+
+                TimeSpan totalDuration = TimeSpan.Zero;
+                foreach (var result in results)
+                {
+                    totalDuration += result.Duration;
+                }
+
+                root.Children.Add(new Message
+                {
+                    Text = $"Total duration: {totalDuration}"
+                });
             }
             else if (includeStart)
             {
@@ -68,6 +79,14 @@ namespace StructuredLogViewer
 
                 if (!includeDuration && !includeStart && !includeEnd && !isProject)
                 {
+                    if (result.RootFolder is string rootFolderName)
+                    {
+                        parent = InsertParent(
+                            parent,
+                            actualParent: null,
+                            name: rootFolderName);
+                    }
+
                     var project = resultNode.GetNearestParent<Project>();
                     if (project != null)
                     {
@@ -75,9 +94,7 @@ namespace StructuredLogViewer
                         parent = InsertParent(
                             parent,
                             project,
-                            projectName,
-                            existingProxy => existingProxy.Original is Project existing &&
-                                string.Equals(existing.SourceFilePath, project.SourceFilePath, StringComparison.OrdinalIgnoreCase));
+                            projectName);
                     }
 
                     if (project == null)
@@ -142,7 +159,7 @@ namespace StructuredLogViewer
             string name = null,
             Func<ProxyNode, bool> existingNodeFinder = null)
         {
-            name ??= actualParent.Name;
+            name ??= actualParent?.Name;
 
             ProxyNode folderProxy = null;
 

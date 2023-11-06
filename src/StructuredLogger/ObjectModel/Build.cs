@@ -76,31 +76,6 @@ namespace Microsoft.Build.Logging.StructuredLogger
             return version.Major > major || (version.Major == major && version.Minor >= minor);
         }
 
-        private Dictionary<string, ArchiveFile> sourceFiles;
-        public Dictionary<string, ArchiveFile> SourceFiles
-        {
-            get
-            {
-                if (sourceFiles == null)
-                {
-                    lock (this)
-                    {
-                        if (sourceFiles == null)
-                        {
-                            sourceFiles = new Dictionary<string, ArchiveFile>();
-                            if (SourceFilesArchive != null)
-                            {
-                                var files = ReadSourceFiles(SourceFilesArchive);
-                                sourceFiles = files.ToDictionary(file => file.FullPath);
-                            }
-                        }
-                    }
-                }
-
-                return sourceFiles;
-            }
-        }
-
         private NamedNode evaluationFolder;
         public NamedNode EvaluationFolder
         {
@@ -171,6 +146,8 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
         public BuildStatistics Statistics { get; set; } = new BuildStatistics();
 
+        public FileCopyMap FileCopyMap { get; set; }
+
         public Dictionary<string, HashSet<string>> TaskAssemblies { get; } = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
 
         public void RegisterTask(Task task)
@@ -212,15 +189,10 @@ namespace Microsoft.Build.Logging.StructuredLogger
             return found;
         }
 
-        private Dictionary<int, ProjectEvaluation> evaluationById;
+        private Dictionary<int, ProjectEvaluation> evaluationById = new Dictionary<int, ProjectEvaluation>();
 
         public ProjectEvaluation FindEvaluation(int id)
         {
-            if (evaluationById == null)
-            {
-                evaluationById = new Dictionary<int, ProjectEvaluation>();
-            }
-
             if (!evaluationById.TryGetValue(id, out var projectEvaluation))
             {
                 var evaluation = EvaluationFolder;
@@ -229,7 +201,8 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     return null;
                 }
 
-                projectEvaluation = evaluation.FindChild<ProjectEvaluation>(e => e.Id == id);
+                // the evaluation we want is likely to be at the end (recently added)
+                projectEvaluation = evaluation.FindLastChild<ProjectEvaluation>(e => e.Id == id);
                 if (projectEvaluation != null)
                 {
                     evaluationById[id] = projectEvaluation;
