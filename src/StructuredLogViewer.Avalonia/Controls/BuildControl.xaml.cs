@@ -6,18 +6,17 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading;
+using System.Xml;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Data;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Markup.Xaml;
+using Avalonia.Styling;
+using Avalonia.Threading;
 using Microsoft.Build.Logging.StructuredLogger;
 using Microsoft.Language.Xml;
-using Avalonia.Controls;
-using Avalonia.Markup.Xaml;
-using Avalonia.Interactivity;
-using Avalonia.Threading;
-using Avalonia.Input;
-using Avalonia;
-using Avalonia.Styling;
-using Avalonia.Data;
-using Avalonia.Layout;
-using System.Xml;
 
 namespace StructuredLogViewer.Avalonia.Controls
 {
@@ -27,7 +26,7 @@ namespace StructuredLogViewer.Avalonia.Controls
         public TreeViewItem SelectedTreeViewItem { get; private set; }
         public string LogFilePath => Build?.LogFilePath;
 
-        private ScrollViewer scrollViewer;
+        private ScrollViewer scrollViewer = null;
 
         private SourceFileResolver sourceFileResolver;
         private ArchiveFileResolver archiveFile => sourceFileResolver.ArchiveFile;
@@ -128,14 +127,9 @@ namespace StructuredLogViewer.Avalonia.Controls
             Build = build;
 
             // first try to see if the source archive was embedded in the log
-            if (build.SourceFilesArchive != null)
+            if (build.SourceFiles != null)
             {
-                var files = Build.ReadSourceFiles(build.SourceFilesArchive);
-
-                // release the large array since it's no longer necessary
-                build.SourceFilesArchive = null;
-
-                sourceFileResolver = new SourceFileResolver(files);
+                sourceFileResolver = new SourceFileResolver(build.SourceFiles);
             }
             else
             {
@@ -959,14 +953,7 @@ Recent:
 
             string GetText(BaseNode node)
             {
-                if (node is IHasTitle hasTitle)
-                {
-                    return hasTitle.Title ?? "";
-                }
-                else
-                {
-                    return node.ToString() ?? "";
-                }
+                return node.Title ?? node.ToString();
             }
         }
 
@@ -1158,12 +1145,14 @@ Recent:
                 || (node is Task task && task.Parent is Target parentTarget && sourceFileResolver.HasFile(parentTarget.SourceFilePath))
                 || (node is IHasSourceFile ihsf && ihsf.SourceFilePath != null && sourceFileResolver.HasFile(ihsf.SourceFilePath))
                 || (node is NameValueNode nvn && nvn.IsValueShortened)
+                || (node is NamedNode nn && nn.IsNameShortened)
                 || (node is TextNode tn && tn.IsTextShortened);
         }
 
         private bool HasFullText(BaseNode node)
         {
             return (node is NameValueNode nvn && nvn.IsValueShortened)
+                || (node is NamedNode nn && nn.IsNameShortened)
                 || (node is TextNode tn && tn.IsTextShortened);
         }
 
@@ -1224,8 +1213,10 @@ Recent:
                         return DisplayFile(sourceFile.SourceFilePath, sourceFileLine.LineNumber);
                     case NameValueNode nameValueNode when nameValueNode.IsValueShortened:
                         return DisplayText(nameValueNode.Value, nameValueNode.Name);
+                    case NamedNode namedNode when namedNode.IsNameShortened:
+                        return DisplayText(namedNode.Name, namedNode.ShortenedName ?? namedNode.TypeName);
                     case TextNode textNode when textNode.IsTextShortened:
-                        return DisplayText(textNode.Text, textNode.Name ?? textNode.GetType().Name);
+                        return DisplayText(textNode.Text, textNode.ShortenedText ?? textNode.TypeName);
                     default:
                         return false;
                 }
@@ -1246,7 +1237,7 @@ Recent:
                 return false;
             }
 
-            string preprocessableFilePath = Utilities.InsertMissingDriveSeparator(sourceFilePath);
+            string preprocessableFilePath = sourceFilePath;
 
             Action preprocess = null;
             if (evaluation != null)

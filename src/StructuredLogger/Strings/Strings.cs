@@ -510,6 +510,9 @@ namespace Microsoft.Build.Logging.StructuredLogger
         public static string Assembly => "Assembly";
         public static string CommandLineArguments => "CommandLineArguments";
         public static string Item => "Item";
+        public static string AddItem => "AddItem";
+        public static string RemoveItem => "RemoveItem";
+        public static string Metadata => "Metadata";
         public static string Property => "Property";
         public static string Duration => "Duration";
         public static string Note => "Note";
@@ -524,6 +527,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
         public static string NoImportMissingFile = "missing file";
         public static string NoImportInvalidFile = "invalid file";
         public static string Errors = "Errors";
+        public static string Task = "Task";
 
         // These aren't localized, see https://github.com/microsoft/MSBuildSdks/blob/543e965191417dee65471ee57a6702289847b49b/src/Artifacts/Tasks/Robocopy.cs#L66-L77
         private const string RobocopyFileCopiedMessage = "Copied {0} to {1}";

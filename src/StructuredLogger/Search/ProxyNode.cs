@@ -28,20 +28,30 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
         public static string GetNodeText(BaseNode node)
         {
-            if (node is Target t)
+            if (node == null)
             {
-                return t.Name;
-            }
-            else if (node is Project project)
-            {
-                return $"{project.Name} {project.AdornmentString} {project.TargetsDisplayText}";
-            }
-            else if (node is ProjectEvaluation evaluation)
-            {
-                return $"{evaluation.Name} {evaluation.EvaluationText}";
+                return null;
             }
 
-            return node.ToString();
+            if (node is NamedNode namedNode)
+            {
+                if (node is Project project)
+                {
+                    return $"{project.Name} {project.AdornmentString} {project.TargetsDisplayText}";
+                }
+                else if (node is ProjectEvaluation evaluation)
+                {
+                    return $"{evaluation.Name} {evaluation.AdornmentString} {evaluation.EvaluationText}";
+                }
+
+                return namedNode.Name;
+            }
+            else if (node is TextNode textNode)
+            {
+                return textNode.Text;
+            }
+
+            return node.Title;
         }
 
         public void Populate(SearchResult result)
@@ -68,7 +78,10 @@ namespace Microsoft.Build.Logging.StructuredLogger
             }
 
             string typePrefix = OriginalType;
-            if (typePrefix != Strings.Folder)
+            if (typePrefix != Strings.Folder &&
+                typePrefix != Strings.Item &&
+                typePrefix != Strings.Metadata &&
+                typePrefix != Strings.Property)
             {
                 Highlights.Add(typePrefix);
             }

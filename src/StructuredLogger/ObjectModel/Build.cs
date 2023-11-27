@@ -14,12 +14,29 @@ namespace Microsoft.Build.Logging.StructuredLogger
     {
         public StringCache StringTable { get; } = new StringCache();
 
+        public SearchIndex SearchIndex { get; set; }
+
         public bool IsAnalyzed { get; set; }
         public bool Succeeded { get; set; }
 
         public string LogFilePath { get; set; }
         public int FileFormatVersion { get; set; }
         public byte[] SourceFilesArchive { get; set; }
+
+        private IReadOnlyList<ArchiveFile> sourceFiles;
+        public IReadOnlyList<ArchiveFile> SourceFiles
+        {
+            get
+            {
+                if (sourceFiles == null && SourceFilesArchive != null)
+                {
+                    sourceFiles = ReadSourceFiles(SourceFilesArchive);
+                    SourceFilesArchive = null;
+                }
+
+                return sourceFiles;
+            }
+        }
 
         private string msbuildVersion;
         public string MSBuildVersion 
@@ -83,7 +100,8 @@ namespace Microsoft.Build.Logging.StructuredLogger
             {
                 if (evaluationFolder == null)
                 {
-                    evaluationFolder = GetOrCreateNodeWithName<TimedNode>(Strings.Evaluation);
+                    evaluationFolder = new TimedNode { Name = Strings.Evaluation };
+                    AddChild(evaluationFolder);
                 }
 
                 return evaluationFolder;
@@ -120,9 +138,17 @@ namespace Microsoft.Build.Logging.StructuredLogger
             }
         }
 
+        public static string IgnoreEmbeddedFiles { get; set; }
+
         public static IReadOnlyList<ArchiveFile> ReadSourceFiles(Stream stream)
         {
             var result = new List<ArchiveFile>();
+
+            string[] ignoreSubstrings = null;
+            if (!string.IsNullOrWhiteSpace(IgnoreEmbeddedFiles))
+            {
+                ignoreSubstrings = IgnoreEmbeddedFiles.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+            }
 
             try
             {
@@ -130,6 +156,24 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 {
                     foreach (var entry in zipArchive.Entries)
                     {
+                        if (ignoreSubstrings != null)
+                        {
+                            bool ignore = false;
+                            foreach (var substring in ignoreSubstrings)
+                            {
+                                if (entry.FullName.IndexOf(substring, StringComparison.OrdinalIgnoreCase) != -1)
+                                {
+                                    ignore = true;
+                                    break;
+                                }
+                            }
+
+                            if (ignore)
+                            {
+                                continue;
+                            }
+                        }
+
                         var file = ArchiveFile.From(entry);
                         result.Add(file);
                     }

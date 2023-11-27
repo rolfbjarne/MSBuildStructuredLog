@@ -20,6 +20,7 @@ using Microsoft.Build.Logging.StructuredLogger;
 using Microsoft.Language.Xml;
 using Mono.Cecil;
 using StructuredLogViewer.Core.ProjectGraph;
+using TPLTask = System.Threading.Tasks.Task;
 
 namespace StructuredLogViewer.Controls
 {
@@ -71,14 +72,22 @@ namespace StructuredLogViewer.Controls
 
             searchLogControl.ExecuteSearch = (searchText, maxResults, cancellationToken) =>
             {
+                if (Build.SearchIndex is { } index)
+                {
+                    index.MaxResults = maxResults;
+                    index.MarkResultsInTree = SettingsService.MarkResultsInTree;
+                    var indexResults = index.FindNodes(searchText, cancellationToken);
+                    PrecalculationDuration = index.PrecalculationDuration;
+                    return indexResults;
+                }
+
                 var search = new Search(
                     new[] { Build },
                     Build.StringTable.Instances,
                     maxResults,
-                    SettingsService.MarkResultsInTree
-                    //, Build.StringTable // disable validation in production
-                    );
+                    SettingsService.MarkResultsInTree);
                 var results = search.FindNodes(searchText, cancellationToken);
+                PrecalculationDuration = search.PrecalculationDuration;
                 return results;
             };
             searchLogControl.ResultsTreeBuilder = BuildResultTree;
@@ -121,14 +130,9 @@ namespace StructuredLogViewer.Controls
             Build = build;
 
             // first try to see if the source archive was embedded in the log
-            if (build.SourceFilesArchive != null)
+            if (build.SourceFiles != null)
             {
-                var files = Build.ReadSourceFiles(build.SourceFilesArchive);
-
-                // release the large array since it's no longer necessary
-                build.SourceFilesArchive = null;
-
-                sourceFileResolver = new SourceFileResolver(files);
+                sourceFileResolver = new SourceFileResolver(build.SourceFiles);
             }
             else
             {
@@ -606,6 +610,7 @@ Use syntax like '$property Prop' to narrow results down by item kind. Supported 
  • Copying file project(ProjectA)
 
 Append [[$time]], [[$start]] and/or [[$end]] to show times and/or durations and sort the results by start time or duration descending (for tasks, targets and projects).
+Use start<""2023-11-23 14:30:54.579"", start>, end< or end> to filter events that start or end before or after a given timestamp. Timestamp needs to be in quotes.
 
 Examples:
 ";
@@ -966,16 +971,14 @@ Recent:
                     Name = parts[index]
                 };
 
-                foreach (var target in GetTargets(filePath))
+                if (PlatformUtilities.HasThreads)
                 {
-                    file.AddChild(new Target
-                    {
-                        Name = target,
-                        SourceFilePath = filePath
-                    });
+                    TPLTask.Run(() => AddTargetsAsync(filePath, file));
                 }
-
-                file.SortChildren();
+                else
+                {
+                    AddTargets(filePath, file);
+                }
 
                 folder.AddChild(file);
                 return file;
@@ -996,10 +999,60 @@ Recent:
             }
         }
 
+        private async TPLTask AddTargetsAsync(string filePath, SourceFile file)
+        {
+            var targets = GetTargets(filePath).OrderBy(t => t).ToArray();
+            if (targets.Length == 0)
+            {
+                return;
+            }
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                foreach (var target in targets)
+                {
+                    file.AddChild(new Target
+                    {
+                        Name = target,
+                        SourceFilePath = filePath
+                    });
+                }
+            });
+        }
+
+        private void AddTargets(string filePath, SourceFile file)
+        {
+            var targets = GetTargets(filePath).OrderBy(t => t).ToArray();
+            if (targets.Length == 0)
+            {
+                return;
+            }
+
+            foreach (var target in targets)
+            {
+                file.AddChild(new Target
+                {
+                    Name = target,
+                    SourceFilePath = filePath
+                });
+            }
+        }
+
+        private static HashSet<string> nonMSBuildExtensions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".dll",
+            ".json",
+            ".rsp",
+            ".sln",
+            ".tmp",
+            ".txt",
+            ".user"
+        };
+
         private IEnumerable<string> GetTargets(string file)
         {
-            if (file.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) ||
-                file.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+            var extension = Path.GetExtension(file);
+            if (nonMSBuildExtensions.Contains(extension))
             {
                 yield break;
             }
@@ -1013,6 +1066,11 @@ Recent:
             var contentText = content.Text;
 
             if (!Utilities.LooksLikeXml(contentText))
+            {
+                yield break;
+            }
+
+            if (contentText.IndexOf("<Target", StringComparison.Ordinal) == -1)
             {
                 yield break;
             }
@@ -1056,6 +1114,7 @@ Recent:
         /// </summary>
         private bool isProcessingBreadcrumbClick = false;
         internal static TimeSpan Elapsed;
+        internal static TimeSpan PrecalculationDuration;
 
         private void BreadCrumb_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
@@ -1313,14 +1372,7 @@ Recent:
 
             string GetText(BaseNode node)
             {
-                if (node is IHasTitle hasTitle)
-                {
-                    return hasTitle.Title ?? "";
-                }
-                else
-                {
-                    return node.ToString() ?? "";
-                }
+                return node.Title ?? node.ToString();
             }
         }
 
@@ -1659,6 +1711,7 @@ Recent:
         private bool HasFullText(BaseNode node)
         {
             return (node is NameValueNode nvn && nvn.IsValueShortened)
+                || (node is NamedNode nn && nn.IsNameShortened)
                 || (node is TextNode tn && tn.IsTextShortened);
         }
 
@@ -1679,7 +1732,9 @@ Recent:
                 case NameValueNode nameValueNode when nameValueNode.IsValueShortened:
                     return DisplayText(nameValueNode.Value, nameValueNode.Name);
                 case TextNode textNode when textNode.IsTextShortened:
-                    return DisplayText(textNode.Text, textNode.Name ?? textNode.GetType().Name);
+                    return DisplayText(textNode.Text, textNode.ShortenedText ?? textNode.TypeName);
+                case NamedNode namedNode when namedNode.IsNameShortened:
+                    return DisplayText(namedNode.Name, namedNode.ShortenedName ?? namedNode.TypeName);
                 default:
                     return false;
             }
@@ -1717,6 +1772,8 @@ Recent:
                         return DisplayAddRemoveItem(addItem.Parent, addItem.LineNumber ?? 0);
                     case RemoveItem removeItem:
                         return DisplayAddRemoveItem(removeItem.Parent, removeItem.LineNumber ?? 0);
+                    case Item item when item.Parent is AddItem parentAddItem && parentAddItem.Name == "EmbedInBinlog":
+                        return DisplayEmbeddedFile(item);
                     case IHasSourceFile hasSourceFile when hasSourceFile.SourceFilePath != null:
                         int line = 0;
                         var hasLine = hasSourceFile as IHasLineNumber;
@@ -1747,6 +1804,19 @@ Recent:
             return false;
         }
 
+        private bool DisplayEmbeddedFile(Item item)
+        {
+            string path = item.Text;
+
+            var candidates = sourceFileResolver.ArchiveFile.FindFileNames(path).ToArray();
+            if (candidates.Length == 1)
+            {
+                return DisplayFile(candidates[0]);
+            }
+
+            return false;
+        }
+
         public bool DisplayFile(string sourceFilePath, int lineNumber = 0, int column = 0, ProjectEvaluation evaluation = null)
         {
             var text = sourceFileResolver.GetSourceFileText(sourceFilePath);
@@ -1755,7 +1825,7 @@ Recent:
                 return false;
             }
 
-            string preprocessableFilePath = Utilities.InsertMissingDriveSeparator(sourceFilePath);
+            string preprocessableFilePath = sourceFilePath;
 
             Action preprocess = null;
             if (evaluation != null)
@@ -1863,7 +1933,7 @@ Recent:
 
         public IEnumerable BuildResultTree(object resultsObject, bool moreAvailable = false)
         {
-            var folder = ResultTree.BuildResultTree(resultsObject, moreAvailable, Elapsed);
+            var folder = ResultTree.BuildResultTree(resultsObject, moreAvailable, Elapsed, PrecalculationDuration);
 
             if (moreAvailable)
             {

@@ -29,11 +29,9 @@ namespace Microsoft.Build.Logging.StructuredLogger
         /// <summary>
         /// Let's see if we even need timestamp, it's just eating memory for now
         /// </summary>
-        public virtual DateTime Timestamp { get { return DateTime.MinValue; } set { } }
+        public virtual DateTime Timestamp { get => DateTime.MinValue; set { } }
 
         public override string TypeName => nameof(Message);
-
-        public override string LookupKey => Text;
 
         public bool IsLowRelevance
         {

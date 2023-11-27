@@ -28,9 +28,6 @@ namespace Microsoft.Build.Logging.StructuredLogger
         private readonly MessageProcessor messageProcessor;
         private readonly StringCache stringTable;
 
-        private System.Threading.Tasks.Task bgWorker;
-        private BlockingCollection<System.Threading.Tasks.Task> bgJobPool;
-
         internal bool PopulatePropertiesAndItemsInBackground = PlatformUtilities.HasThreads;
 
         public StringCache StringTable => stringTable;
@@ -50,6 +47,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
             Intern(Strings.CommandLineArguments);
             Intern(Strings.DoubleWrites);
             Intern(Strings.Errors);
+            Intern(Strings.Task);
             Intern(Strings.Evaluation);
             Intern(Strings.NoImportEmptyExpression);
             Intern(Strings.NoImportNoMatches);
@@ -139,7 +137,9 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
                     if (messageProcessor.DetailedSummary.Length > 0)
                     {
-                        var summary = Build.GetOrCreateNodeWithName<Message>(Intern(Strings.DetailedSummary));
+                        var summary = new Message();
+                        Build.AddChild(summary);
+
                         if (messageProcessor.DetailedSummary[0] == '\n')
                         {
                             messageProcessor.DetailedSummary.Remove(0, 1);
@@ -1093,7 +1093,8 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
                 if (currentItemNode == null || currentItemNode.Name != itemType)
                 {
-                    currentItemNode = itemsNode.GetOrCreateNodeWithName<AddItem>(itemType);
+                    currentItemNode = new AddItem { Name = itemType };
+                    itemsNode.AddChild(currentItemNode);
                 }
 
                 var itemNode = new Item();
@@ -1177,12 +1178,13 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
             Task result = taskName.ToLowerInvariant() switch
             {
+                "msbuild" => new MSBuildTask(),
+                "resolveassemblyreference" => new ResolveAssemblyReferenceTask(),
                 "copy" => new CopyTask(),
                 "robocopy" => new RobocopyTask(),
                 "csc" => new CscTask(),
                 "vbc" => new VbcTask(),
                 "fsc" => new FscTask(),
-                "resolveassemblyreference" => new ResolveAssemblyReferenceTask(),
                 "cl" => new CppAnalyzer.CppTask(),
                 "lib" => new CppAnalyzer.CppTask(),
                 "link" => new CppAnalyzer.CppTask(),

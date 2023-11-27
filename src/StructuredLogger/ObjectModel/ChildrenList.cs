@@ -25,11 +25,11 @@ namespace Microsoft.Build.Logging.StructuredLogger
             CollectionChanged?.Invoke(this, new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
         }
 
-        public virtual T FindNode<T>(string name) where T : NamedNode
+        public virtual T FindNode<T>(string name) where T : BaseNode
         {
             for (int i = 0; i < Count; i++)
             {
-                if (this[i] is T t && t.LookupKey == name)
+                if (this[i] is T t && t.Title == name)
                 {
                     return t;
                 }
@@ -41,10 +41,6 @@ namespace Microsoft.Build.Logging.StructuredLogger
         public void EnsureCapacity(int capacity)
         {
             this.Capacity = capacity;
-        }
-
-        public virtual void OnAdded(NamedNode child)
-        {
         }
     }
 
@@ -87,19 +83,6 @@ namespace Microsoft.Build.Logging.StructuredLogger
             {
                 childrenCache = new Dictionary<ChildrenCacheKey, BaseNode>();
             }
-        }
-
-        public override void OnAdded(NamedNode child)
-        {
-            if (child?.LookupKey == null)
-            {
-                return;
-            }
-
-            EnsureCacheCreated();
-
-            var key = new ChildrenCacheKey(child.GetType(), child.LookupKey);
-            childrenCache[key] = child;
         }
 
         private struct ChildrenCacheKey : IEquatable<ChildrenCacheKey>

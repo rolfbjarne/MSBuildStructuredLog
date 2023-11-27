@@ -8,7 +8,11 @@ namespace StructuredLogViewer
 {
     public class ResultTree
     {
-        public static Folder BuildResultTree(object resultsObject, bool moreAvailable = false, TimeSpan elapsed = default)
+        public static Folder BuildResultTree(
+            object resultsObject,
+            bool moreAvailable = false,
+            TimeSpan elapsed = default,
+            TimeSpan precalculationDuration = default)
         {
             var root = new Folder();
 
@@ -18,9 +22,22 @@ namespace StructuredLogViewer
                 return root;
             }
 
-            root.Children.Add(new Message
+            string durationString = TextUtilities.DisplayDuration(elapsed);
+            if (!string.IsNullOrEmpty(durationString))
             {
-                Text = $"{results.Count} result{(results.Count == 1 ? "" : "s")}. Search took: {elapsed.ToString()}"
+                durationString = $" Search took: {durationString}";
+            }
+
+            string status = $"{results.Count} result{(results.Count == 1 ? "" : "s")}.{durationString}";
+            string precalculationString = TextUtilities.DisplayDuration(precalculationDuration);
+            if (!string.IsNullOrWhiteSpace(precalculationString))
+            {
+                status += $" (precalculation: {precalculationString})";
+            }
+
+            root.Children.Add(new Note
+            {
+                Text = status
             });
 
             bool includeDuration = false;
@@ -57,7 +74,7 @@ namespace StructuredLogViewer
 
                 root.Children.Add(new Message
                 {
-                    Text = $"Total duration: {totalDuration}"
+                    Text = $"Total duration: {TextUtilities.DisplayDuration(totalDuration)}"
                 });
             }
             else if (includeStart)
@@ -90,36 +107,29 @@ namespace StructuredLogViewer
                     var project = resultNode.GetNearestParent<Project>();
                     if (project != null)
                     {
-                        var projectName = ProxyNode.GetNodeText(project);
-                        parent = InsertParent(
-                            parent,
-                            project,
-                            projectName);
+                        parent = InsertParent(parent, project);
                     }
-
-                    if (project == null)
+                    else
                     {
                         var evaluation = resultNode.GetNearestParent<ProjectEvaluation>();
                         if (evaluation != null)
                         {
-                            parent = InsertParent(parent, evaluation.Parent as TimedNode, Strings.Evaluation);
-
-                            var evaluationName = ProxyNode.GetNodeText(evaluation);
-                            parent = InsertParent(parent, evaluation, evaluationName);
+                            parent = InsertParent(parent, evaluation.Parent as TimedNode);
+                            parent = InsertParent(parent, evaluation);
                         }
                     }
 
                     var target = resultNode.GetNearestParent<Target>();
                     if (!isTarget && project != null && target != null && target.Project == project)
                     {
-                        parent = InsertParent(parent, target, target.TypeName + " " + target.Name);
+                        parent = InsertParent(parent, target);
                     }
 
                     // nest under a Task, unless it's an MSBuild task higher up the parent chain
                     var task = resultNode.GetNearestParent<Task>(t => !string.Equals(t.Name, "MSBuild", StringComparison.OrdinalIgnoreCase));
                     if (task != null && !isTarget && project != null && task.GetNearestParent<Project>() == project)
                     {
-                        parent = InsertParent(parent, task, "Task " + task.Name);
+                        parent = InsertParent(parent, task);
                     }
 
                     if (resultNode is Item item &&
@@ -135,13 +145,22 @@ namespace StructuredLogViewer
                         (grandparent is Folder || grandparent is AddItem || grandparent is RemoveItem))
                     {
                         parent = InsertParent(parent, grandparent);
-                        parent = InsertParent(parent, parentItem, parentItem.Text);
+                        parent = InsertParent(parent, parentItem);
                     }
                 }
 
                 var proxy = new ProxyNode();
                 proxy.Original = resultNode;
                 proxy.SearchResult = result;
+                if (resultNode is NamedNode originalNamedNode)
+                {
+                    proxy.Text = originalNamedNode.Name;
+                }
+                else if (resultNode is TextNode originalTextNode)
+                {
+                    proxy.Text = originalTextNode.Text;
+                }
+
                 parent.Children.Add(proxy);
             }
 
@@ -159,7 +178,7 @@ namespace StructuredLogViewer
             string name = null,
             Func<ProxyNode, bool> existingNodeFinder = null)
         {
-            name ??= actualParent?.Name;
+            name ??= ProxyNode.GetNodeText(actualParent);
 
             ProxyNode folderProxy = null;
 
@@ -176,19 +195,25 @@ namespace StructuredLogViewer
 
                 if (folderProxy == null)
                 {
-                    folderProxy = new ProxyNode { Name = name };
+                    folderProxy = new ProxyNode { Text = name };
                     parent.AddChild(folderProxy);
                 }
             }
 
             if (folderProxy == null)
             {
-                folderProxy = parent.GetOrCreateNodeWithName<ProxyNode>(name);
+                folderProxy = parent.GetOrCreateNodeWithText<ProxyNode>(name);
             }
 
             folderProxy.Original = actualParent;
+
             if (folderProxy.Highlights.Count == 0)
             {
+                if (actualParent is Target or Task or AddItem or RemoveItem)
+                {
+                    folderProxy.Highlights.Add(folderProxy.OriginalType + " ");
+                }
+
                 folderProxy.Highlights.Add(name);
             }
 

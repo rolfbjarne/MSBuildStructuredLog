@@ -12,6 +12,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
     {
         private readonly Construction construction;
         private readonly StringCache stringTable;
+        private readonly ImportTreeAnalyzer importTreeAnalyzer;
         private int fileFormatVersion = 0;
 
         public StringBuilder DetailedSummary { get; } = new StringBuilder();
@@ -20,6 +21,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
         {
             this.construction = construction;
             this.stringTable = stringTable;
+            this.importTreeAnalyzer = new ImportTreeAnalyzer(stringTable);
         }
 
         private string Intern(string text) => stringTable.Intern(text);
@@ -155,7 +157,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
         private void ProcessProjectImported(ProjectImportedEventArgs args)
         {
-            var import = ImportTreeAnalyzer.TryGetImportOrNoImport(args, stringTable);
+            var import = importTreeAnalyzer.TryGetImportOrNoImport(args);
             if (import == null)
             {
                 return;
@@ -443,7 +445,8 @@ namespace Microsoft.Build.Logging.StructuredLogger
                             return;
                         }
                     }
-                    else if (string.Equals(task.Name, "RestoreTask", StringComparison.OrdinalIgnoreCase))
+                    else if (string.Equals(task.Name, "RestoreTask", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(task.Name, "RestoreTaskEx", StringComparison.OrdinalIgnoreCase))
                     {
                         if (ProcessRestoreTask(task, ref parent, message))
                         {
@@ -694,9 +697,11 @@ namespace Microsoft.Build.Logging.StructuredLogger
             Folder results = task.Results;
             node = results ?? inputs;
 
+            int start;
+
             if (message.StartsWith("    ", StringComparison.Ordinal))
             {
-                message = message.Substring(4);
+                start = 4;
 
                 var parameter = node?.FindLastChild<Parameter>();
                 if (parameter != null)
@@ -704,6 +709,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     bool thereWasAConflict = Strings.IsThereWasAConflictPrefix(parameter.Name);
                     if (thereWasAConflict)
                     {
+                        message = message.Substring(start);
                         if (construction.Build.IsMSBuildVersionAtLeast(16, 9))
                         {
                             // https://github.com/KirillOsenkov/MSBuildStructuredLog/issues/443
@@ -717,48 +723,43 @@ namespace Microsoft.Build.Logging.StructuredLogger
                         return true;
                     }
 
-                    if (!string.IsNullOrWhiteSpace(message))
+                    node = parameter;
+
+                    if (message.StartsWith("        ", StringComparison.Ordinal))
                     {
-                        node = parameter;
+                        start = 8;
 
-                        if (message.StartsWith("    ", StringComparison.Ordinal))
+                        var lastItem = parameter.FindLastChild<Item>();
+
+                        // only indent if it's not a "For SearchPath..." message - that one needs to be directly under parameter
+                        // also don't indent if it's under AssemblyFoldersEx in Results
+                        if (lastItem != null &&
+                            !Strings.ForSearchPathPrefix.IsMatch(message, 8) &&
+                            !parameter.Name.StartsWith("AssemblyFoldersEx", StringComparison.Ordinal))
                         {
-                            message = message.Substring(4);
-
-                            var lastItem = parameter.FindLastChild<Item>();
-
-                            // only indent if it's not a "For SearchPath..." message - that one needs to be directly under parameter
-                            // also don't indent if it's under AssemblyFoldersEx in Results
-                            if (lastItem != null &&
-                                !Strings.ForSearchPathPrefix.IsMatch(message) &&
-                                !parameter.Name.StartsWith("AssemblyFoldersEx", StringComparison.Ordinal))
-                            {
-                                node = lastItem;
-                            }
+                            node = lastItem;
                         }
+                    }
 
-                        if (!string.IsNullOrEmpty(message))
+                    var equals = message.IndexOf('=');
+                    if (equals != -1 && message.IndexOfFirstLineBreak() == -1)
+                    {
+                        var kvp = TextUtilities.ParseNameValue(message, start);
+                        var metadata = new Metadata
                         {
-                            var equals = message.IndexOf('=');
-                            if (equals != -1 && message.IndexOfFirstLineBreak() == -1)
-                            {
-                                var kvp = TextUtilities.ParseNameValue(message);
-                                var metadata = new Metadata
-                                {
-                                    Name = Intern(kvp.Key.TrimEnd(space)),
-                                    Value = Intern(kvp.Value.TrimStart(space))
-                                };
-                                node.Children.Add(metadata);
-                                metadata.Parent = node;
-                            }
-                            else
-                            {
-                                node.AddChild(new Item
-                                {
-                                    Text = Intern(message)
-                                });
-                            }
-                        }
+                            Name = Intern(kvp.Key.TrimEnd(space)),
+                            Value = Intern(kvp.Value.TrimStart(space))
+                        };
+                        node.Children.Add(metadata);
+                        metadata.Parent = node;
+                    }
+                    else
+                    {
+                        message = message.Substring(start);
+                        node.AddChild(new Item
+                        {
+                            Text = Intern(message)
+                        });
                     }
 
                     return true;
@@ -941,6 +942,14 @@ namespace Microsoft.Build.Logging.StructuredLogger
             else if (message.StartsWith("Merging in runtimes", StringComparison.Ordinal))
             {
                 node = CreateFolder(node, "Merging in runtimes");
+            }
+            else if (message.StartsWith("Package source mapping", StringComparison.Ordinal))
+            {
+                node = CreateFolder(node, "Package source mapping");
+            }
+            else if (message.StartsWith("Restored ", StringComparison.Ordinal))
+            {
+                node = CreateFolder(node, "Restored");
             }
             else if (
                 message.StartsWith(Strings.RestoreTask_CheckingCompatibilityFor, StringComparison.Ordinal) ||

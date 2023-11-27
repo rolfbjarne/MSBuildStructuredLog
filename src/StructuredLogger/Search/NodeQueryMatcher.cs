@@ -54,6 +54,18 @@ namespace StructuredLogViewer
             }
         }
 
+        public bool IsMatch(string field)
+        {
+            if (Quotes)
+            {
+                return string.Equals(field, Word, StringComparison.OrdinalIgnoreCase);
+            }
+            else
+            {
+                return field.IndexOf(Word, StringComparison.OrdinalIgnoreCase) != -1;
+            }
+        }
+
         public override bool Equals(object obj)
         {
             if (obj is Term other)
@@ -86,7 +98,7 @@ namespace StructuredLogViewer
     public class NodeQueryMatcher
     {
         public string Query { get; private set; }
-        public List<Term> Words { get; private set; }
+        public List<Term> Terms { get; private set; }
         public string TypeKeyword { get; private set; }
         public int NodeIndex { get; private set; } = -1;
         private HashSet<string>[] MatchesInStrings { get; set; }
@@ -97,43 +109,46 @@ namespace StructuredLogViewer
         public bool UnderProject { get; set; } = false;
         public bool IsCopy { get; set; }
 
-        private Term nameToSearch { get; set; }
-        private Term valueToSearch { get; set; }
-        private List<NodeQueryMatcher> IncludeMatchers { get; set; } = new List<NodeQueryMatcher>();
-        private List<NodeQueryMatcher> ExcludeMatchers { get; set; } = new List<NodeQueryMatcher>();
+        public int NameTermIndex { get; set; } = -1;
+        public int ValueTermIndex { get; set; } = -1;
+
+        public DateTime StartBefore { get; set; }
+        public DateTime StartAfter { get; set; }
+        public DateTime EndBefore { get; set; }
+        public DateTime EndAfter { get; set; }
+        public bool HasTimeIntervalConstraints { get; set; }
+
+        public IList<NodeQueryMatcher> IncludeMatchers { get; } = new List<NodeQueryMatcher>();
+        public IList<NodeQueryMatcher> ExcludeMatchers { get; } = new List<NodeQueryMatcher>();
 
         // avoid allocating this for every node
         [ThreadStatic]
         private static string[] searchFieldsThreadStatic;
 
-        private readonly StringCache stringCache; // only used for validation that all strings are interned (disabled)
+        public const int MaxArraySize = 6;
 
         public NodeQueryMatcher(
             string query,
             IEnumerable<string> stringTable,
-            CancellationToken cancellationToken = default,
-            StringCache stringCache = null // validation disabled in production
-            )
+            CancellationToken cancellationToken = default)
         {
-            this.stringCache = stringCache;
-
             query = PreprocessQuery(query);
 
             this.Query = query;
 
-            var rawWords = TextUtilities.Tokenize(query);
-            this.Words = new List<Term>(rawWords.Count);
-            foreach (var rawWord in rawWords)
+            var rawTerms = TextUtilities.Tokenize(query);
+            this.Terms = new List<Term>(rawTerms.Count);
+            foreach (var rawTerm in rawTerms)
             {
-                var term = Term.Get(rawWord);
+                var term = Term.Get(rawTerm);
                 if (term != default)
                 {
-                    Words.Add(term);
+                    Terms.Add(term);
                 }
             }
 
-            if (Words.Count == 1 &&
-                Words[0].Word is string potentialNodeIndex &&
+            if (Terms.Count == 1 &&
+                Terms[0].Word is string potentialNodeIndex &&
                 potentialNodeIndex.Length > 1 &&
                 potentialNodeIndex[0] == '$')
             {
@@ -141,37 +156,52 @@ namespace StructuredLogViewer
                 if (int.TryParse(nodeIndexText, out var nodeIndex))
                 {
                     NodeIndex = nodeIndex;
-                    Words.RemoveAt(0);
+                    Terms.RemoveAt(0);
                     return;
                 }
             }
 
-            for (int i = Words.Count - 1; i >= 0; i--)
+            ParseTerms(stringTable);
+
+            if (IsCopy || stringTable is null)
             {
-                var word = Words[i].Word;
+                return;
+            }
+
+            var sw = Stopwatch.StartNew();
+            MatchesInStrings = PrecomputeMatchesInStrings(stringTable, Terms, cancellationToken);
+            var elapsed = sw.Elapsed;
+            PrecalculationDuration = elapsed;
+        }
+
+        private void ParseTerms(IEnumerable<string> stringTable)
+        {
+            for (int termIndex = Terms.Count - 1; termIndex >= 0; termIndex--)
+            {
+                var word = Terms[termIndex].Word;
 
                 if (string.Equals(word, "$time", StringComparison.OrdinalIgnoreCase) || string.Equals(word, "$duration", StringComparison.OrdinalIgnoreCase))
                 {
-                    Words.RemoveAt(i);
+                    Terms.RemoveAt(termIndex);
                     IncludeDuration = true;
                     continue;
                 }
                 else if (string.Equals(word, "$start", StringComparison.OrdinalIgnoreCase) || string.Equals(word, "$starttime", StringComparison.OrdinalIgnoreCase))
                 {
-                    Words.RemoveAt(i);
+                    Terms.RemoveAt(termIndex);
                     IncludeStart = true;
                     continue;
                 }
                 else if (string.Equals(word, "$end", StringComparison.OrdinalIgnoreCase) || string.Equals(word, "$endtime", StringComparison.OrdinalIgnoreCase))
                 {
-                    Words.RemoveAt(i);
+                    Terms.RemoveAt(termIndex);
                     IncludeEnd = true;
                     continue;
                 }
 
                 if (word.Length > 2 && word[0] == '$' && word[1] != '(' && (TypeKeyword == null || !TypeKeyword.Contains(word.Substring(1).ToLowerInvariant())))
                 {
-                    Words.RemoveAt(i);
+                    Terms.RemoveAt(termIndex);
                     TypeKeyword = word.Substring(1).ToLowerInvariant();
                     if (string.Equals(TypeKeyword, "copy", StringComparison.OrdinalIgnoreCase))
                     {
@@ -184,7 +214,7 @@ namespace StructuredLogViewer
                 if (word.StartsWith("under(", StringComparison.OrdinalIgnoreCase) && word.EndsWith(")"))
                 {
                     word = word.Substring(6, word.Length - 7);
-                    Words.RemoveAt(i);
+                    Terms.RemoveAt(termIndex);
                     var underMatcher = new NodeQueryMatcher(word, stringTable);
                     IncludeMatchers.Add(underMatcher);
                     continue;
@@ -193,7 +223,7 @@ namespace StructuredLogViewer
                 if (word.StartsWith("notunder(", StringComparison.OrdinalIgnoreCase) && word.EndsWith(")"))
                 {
                     word = word.Substring(9, word.Length - 10);
-                    Words.RemoveAt(i);
+                    Terms.RemoveAt(termIndex);
                     var underMatcher = new NodeQueryMatcher(word, stringTable);
                     ExcludeMatchers.Add(underMatcher);
                     continue;
@@ -202,7 +232,7 @@ namespace StructuredLogViewer
                 if (word.StartsWith("project(", StringComparison.OrdinalIgnoreCase) && word.EndsWith(")"))
                 {
                     word = word.Substring(8, word.Length - 9);
-                    Words.RemoveAt(i);
+                    Terms.RemoveAt(termIndex);
 
                     var underMatcher = new NodeQueryMatcher(word, stringTable);
                     underMatcher.UnderProject = true;
@@ -210,15 +240,73 @@ namespace StructuredLogViewer
                     continue;
                 }
 
+                if (word.StartsWith("start<\"", StringComparison.OrdinalIgnoreCase) && word.Length > 8 && word.EndsWith("\""))
+                {
+                    word = word.Substring(7, word.Length - 8);
+                    Terms.RemoveAt(termIndex);
+
+                    if (DateTime.TryParse(word, out var startBefore))
+                    {
+                        StartBefore = startBefore;
+                        HasTimeIntervalConstraints = true;
+                        continue;
+                    }
+                }
+
+                if (word.StartsWith("start>\"", StringComparison.OrdinalIgnoreCase) && word.Length > 8 && word.EndsWith("\""))
+                {
+                    word = word.Substring(7, word.Length - 8);
+                    Terms.RemoveAt(termIndex);
+
+                    if (DateTime.TryParse(word, out var startAfter))
+                    {
+                        StartAfter = startAfter;
+                        HasTimeIntervalConstraints = true;
+                        continue;
+                    }
+                }
+
+                if (word.StartsWith("end<\"", StringComparison.OrdinalIgnoreCase) && word.Length > 6 && word.EndsWith("\""))
+                {
+                    word = word.Substring(5, word.Length - 6);
+                    Terms.RemoveAt(termIndex);
+
+                    if (DateTime.TryParse(word, out var endBefore))
+                    {
+                        EndBefore = endBefore;
+                        HasTimeIntervalConstraints = true;
+                        continue;
+                    }
+                }
+
+                if (word.StartsWith("end>\"", StringComparison.OrdinalIgnoreCase) && word.Length > 6 && word.EndsWith("\""))
+                {
+                    word = word.Substring(5, word.Length - 6);
+                    Terms.RemoveAt(termIndex);
+
+                    if (DateTime.TryParse(word, out var endAfter))
+                    {
+                        EndAfter = endAfter;
+                        HasTimeIntervalConstraints = true;
+                        continue;
+                    }
+                }
+            }
+
+            // need to do a second pass because previous loop might shift term indices by removing terms
+            for (int termIndex = Terms.Count - 1; termIndex >= 0; termIndex--)
+            {
+                var word = Terms[termIndex].Word;
+
                 if (word.StartsWith("name=", StringComparison.OrdinalIgnoreCase) && word.Length > 5)
                 {
                     word = word.Substring(5, word.Length - 5);
-                    Words.RemoveAt(i);
+                    Terms.RemoveAt(termIndex);
                     var term = Term.Get(word);
                     if (term != default)
                     {
-                        Words.Insert(i, term);
-                        nameToSearch = term;
+                        Terms.Insert(termIndex, term);
+                        NameTermIndex = termIndex;
                     }
 
                     continue;
@@ -227,24 +315,17 @@ namespace StructuredLogViewer
                 if (word.StartsWith("value=", StringComparison.OrdinalIgnoreCase) && word.Length > 6)
                 {
                     word = word.Substring(6, word.Length - 6);
-                    Words.RemoveAt(i);
+                    Terms.RemoveAt(termIndex);
                     var term = Term.Get(word);
                     if (term != default)
                     {
-                        Words.Insert(i, term);
-                        valueToSearch = term;
+                        Terms.Insert(termIndex, term);
+                        ValueTermIndex = termIndex;
                     }
 
                     continue;
                 }
             }
-
-            if (IsCopy)
-            {
-                return;
-            }
-
-            PrecomputeMatchesInStrings(stringTable, cancellationToken);
         }
 
         private string PreprocessQuery(string query)
@@ -256,21 +337,37 @@ namespace StructuredLogViewer
 
             query = query.Replace("$csc", "$task csc");
             query = query.Replace("$rar", "$task ResolveAssemblyReference");
+            query = query.Replace("project (", "project(");
+            query = query.Replace("under (", "under(");
+            query = query.Replace("notunder (", "notunder(");
+            query = query.Replace("start < ", "start<");
+            query = query.Replace("start <", "start<");
+            query = query.Replace("start< ", "start<");
+            query = query.Replace("start > ", "start>");
+            query = query.Replace("start >", "start>");
+            query = query.Replace("start> ", "start>");
+            query = query.Replace("end < ", "end<");
+            query = query.Replace("end <", "end<");
+            query = query.Replace("end< ", "end<");
+            query = query.Replace("end > ", "end>");
+            query = query.Replace("end >", "end>");
+            query = query.Replace("end> ", "end>");
 
             return query;
         }
 
-        private void PrecomputeMatchesInStrings(IEnumerable<string> stringTable, CancellationToken cancellationToken = default)
+        public static HashSet<string>[] PrecomputeMatchesInStrings(
+            IEnumerable<string> stringTable,
+            IList<Term> terms,
+            CancellationToken cancellationToken = default)
         {
-            int wordCount = Words.Count;
-            MatchesInStrings = new HashSet<string>[wordCount];
-            var wordTasks = new System.Threading.Tasks.Task[wordCount];
+            int termCount = terms.Count;
+            var matchesInStrings = new HashSet<string>[termCount];
+            var wordTasks = new System.Threading.Tasks.Task[termCount];
 
-            var sw = Stopwatch.StartNew();
-
-            for (int i = 0; i < Words.Count; i++)
+            for (int i = 0; i < termCount; i++)
             {
-                MatchesInStrings[i] = new HashSet<string>();
+                matchesInStrings[i] = new HashSet<string>();
             }
 
 #if false
@@ -314,14 +411,13 @@ namespace StructuredLogViewer
             }
 #endif
 
-            var elapsed = sw.Elapsed;
-            PrecalculationDuration = elapsed;
+            return matchesInStrings;
 
             void ProcessString(string stringInstance)
             {
-                for (int i = 0; i < Words.Count; i++)
+                for (int i = 0; i < terms.Count; i++)
                 {
-                    var term = Words[i];
+                    var term = terms[i];
                     if (term.Quotes)
                     {
                         continue;
@@ -330,7 +426,7 @@ namespace StructuredLogViewer
                     var word = term.Word;
                     if (stringInstance.IndexOf(word, StringComparison.OrdinalIgnoreCase) != -1)
                     {
-                        var matches = MatchesInStrings[i];
+                        var matches = matchesInStrings[i];
                         lock (matches)
                         {
                             matches.Add(stringInstance);
@@ -339,8 +435,6 @@ namespace StructuredLogViewer
                 }
             }
         }
-
-        private const int MaxArraySize = 6;
 
         public static (string[] array, int count) PopulateSearchFields(BaseNode node)
         {
@@ -363,7 +457,7 @@ namespace StructuredLogViewer
             // for tasks derived from Task $task should still work
             if (node is Microsoft.Build.Logging.StructuredLogger.Task t && t.IsDerivedTask)
             {
-                searchFields[count++] = "Task";
+                searchFields[count++] = Strings.Task;
             }
 
             searchFields[count++] = typeName;
@@ -387,32 +481,7 @@ namespace StructuredLogViewer
                     searchFields[count++] = named.Name;
                 }
 
-                if (node is TextNode textNode)
-                {
-                    if (!string.IsNullOrEmpty(textNode.Text))
-                    {
-                        searchFields[count++] = textNode.Text;
-                    }
-
-                    if (node is AbstractDiagnostic diagnostic)
-                    {
-                        if (!string.IsNullOrEmpty(diagnostic.Code))
-                        {
-                            searchFields[count++] = diagnostic.Code;
-                        }
-
-                        if (!string.IsNullOrEmpty(diagnostic.File))
-                        {
-                            searchFields[count++] = diagnostic.File;
-                        }
-
-                        if (!string.IsNullOrEmpty(diagnostic.ProjectFile))
-                        {
-                            searchFields[count++] = diagnostic.ProjectFile;
-                        }
-                    }
-                }
-                else if (node is TimedNode)
+                if (node is TimedNode)
                 {
                     if (node is Project project)
                     {
@@ -438,13 +507,60 @@ namespace StructuredLogViewer
                             searchFields[count++] = evaluation.EvaluationText;
                         }
                     }
-                    //else if (node is Target target)
-                    //{
-                    //    if (!string.IsNullOrEmpty(target.ParentTarget))
-                    //    {
-                    //        searchFields[count++] = target.ParentTarget;
-                    //    }
-                    //}
+                }
+            }
+            else if (node is TextNode textNode)
+            {
+                if (!string.IsNullOrEmpty(textNode.Text))
+                {
+                    searchFields[count++] = textNode.Text;
+                }
+
+                if (node is AbstractDiagnostic diagnostic)
+                {
+                    if (!string.IsNullOrEmpty(diagnostic.Code))
+                    {
+                        searchFields[count++] = diagnostic.Code;
+                    }
+
+                    if (!string.IsNullOrEmpty(diagnostic.File))
+                    {
+                        searchFields[count++] = diagnostic.File;
+                    }
+
+                    if (!string.IsNullOrEmpty(diagnostic.ProjectFile))
+                    {
+                        searchFields[count++] = diagnostic.ProjectFile;
+                    }
+                }
+                else if (node is Import import)
+                {
+                    if (!string.IsNullOrEmpty(import.ProjectFilePath))
+                    {
+                        searchFields[count++] = import.ProjectFilePath;
+                    }
+
+                    if (!string.IsNullOrEmpty(import.ImportedProjectFilePath))
+                    {
+                        searchFields[count++] = import.ImportedProjectFilePath;
+                    }
+                }
+                else if (node is NoImport noImport)
+                {
+                    if (!string.IsNullOrEmpty(noImport.ProjectFilePath))
+                    {
+                        searchFields[count++] = noImport.ProjectFilePath;
+                    }
+
+                    if (!string.IsNullOrEmpty(noImport.ImportedFileSpec))
+                    {
+                        searchFields[count++] = noImport.ImportedFileSpec;
+                    }
+
+                    if (!string.IsNullOrEmpty(noImport.Reason))
+                    {
+                        searchFields[count++] = noImport.Reason;
+                    }
                 }
             }
 
@@ -458,11 +574,6 @@ namespace StructuredLogViewer
         {
             SearchResult result = null;
 
-            if (node == null)
-            {
-                return null;
-            }
-
             if (NodeIndex > -1)
             {
                 if (node is TimedNode timedNode && timedNode.Index == NodeIndex)
@@ -472,6 +583,8 @@ namespace StructuredLogViewer
                     result.AddMatch(prefix + NodeIndex.ToString(), NodeIndex.ToString());
                     return result;
                 }
+
+                return null;
             }
 
             var searchFields = PopulateSearchFields(node);
@@ -479,9 +592,11 @@ namespace StructuredLogViewer
             if (TypeKeyword != null)
             {
                 // zeroth field is always the type
-                if (string.Equals(TypeKeyword, searchFields.array[0], StringComparison.OrdinalIgnoreCase) ||
+                if (string.Equals(searchFields.array[0], TypeKeyword, StringComparison.OrdinalIgnoreCase) ||
                     // special case for types derived from Task, $task should still work
-                    (TypeKeyword == "task" && searchFields.count > 1 && searchFields.array[1] == "Task"))
+                    (searchFields.count > 1 &&
+                    string.Equals(searchFields.array[0], Strings.Task, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(searchFields.array[1], TypeKeyword, StringComparison.OrdinalIgnoreCase)))
                 {
                     // this node is of the type that we need, search other fields
                     if (result == null)
@@ -499,23 +614,29 @@ namespace StructuredLogViewer
 
             bool nameMatched = false;
             bool valueMatched = false;
-            for (int i = 0; i < Words.Count; i++)
+            for (int termIndex = 0; termIndex < Terms.Count; termIndex++)
             {
                 bool anyFieldMatched = false;
-                var term = Words[i];
-                var word = term.Word;
+                Term term = Terms[termIndex];
+                string word = term.Word;
 
-                for (int j = 0; j < searchFields.count; j++)
+                for (int fieldIndex = 0; fieldIndex < searchFields.count; fieldIndex++)
                 {
-                    var field = searchFields.array[j];
+                    string field = searchFields.array[fieldIndex];
 
-                    //if (!stringCache.Contains(field))
-                    //{
-                    //}
-
-                    if (!term.IsMatch(field, MatchesInStrings[i]))
+                    if (MatchesInStrings != null)
                     {
-                        continue;
+                        if (!term.IsMatch(field, MatchesInStrings[termIndex]))
+                        {
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        if (!term.IsMatch(field))
+                        {
+                            continue;
+                        }
                     }
 
                     if (result == null)
@@ -524,19 +645,18 @@ namespace StructuredLogViewer
                     }
 
                     // if matched on the type of the node (always field 0), special case it
-                    if (j == 0)
+                    if (fieldIndex == 0)
                     {
                         result.AddMatchByNodeType();
                     }
                     else
                     {
                         string fullText = field;
-                        var nameValueNode = node as NameValueNode;
 
                         // NameValueNode is a special case: have to check in which field to search
-                        if (nameValueNode != null && (nameToSearch != default || valueToSearch != default))
+                        if (node is NameValueNode && (NameTermIndex != -1 || ValueTermIndex != -1))
                         {
-                            if (j == 1 && term == nameToSearch)
+                            if (fieldIndex == 1 && termIndex == NameTermIndex)
                             {
                                 result.AddMatch(fullText, word, addAtBeginning: true);
                                 nameMatched = true;
@@ -544,7 +664,7 @@ namespace StructuredLogViewer
                                 break;
                             }
 
-                            if (j == 2 && term == valueToSearch)
+                            if (fieldIndex == 2 && termIndex == ValueTermIndex)
                             {
                                 result.AddMatch(fullText, word);
                                 valueMatched = true;
@@ -572,7 +692,8 @@ namespace StructuredLogViewer
                 return null;
             }
 
-            if (nameToSearch != default && valueToSearch != default && (!nameMatched || !valueMatched))
+            // if both name and value are specified, they both have to match
+            if (NameTermIndex != -1 && ValueTermIndex != -1 && (!nameMatched || !valueMatched))
             {
                 return null;
             }
@@ -582,7 +703,7 @@ namespace StructuredLogViewer
             {
                 if (!showResult)
                 {
-                    showResult = IsUnder(matcher, result);
+                    showResult = IsUnder(matcher, result.Node);
                 }
             }
 
@@ -593,7 +714,7 @@ namespace StructuredLogViewer
 
             foreach (NodeQueryMatcher matcher in ExcludeMatchers)
             {
-                if (IsUnder(matcher, result))
+                if (IsUnder(matcher, result.Node))
                 {
                     return null;
                 }
@@ -602,18 +723,44 @@ namespace StructuredLogViewer
             return result;
         }
 
-        private static bool IsUnder(NodeQueryMatcher matcher, SearchResult result)
+        public bool IsTimeIntervalMatch(BaseNode node)
+        {
+            if (!HasTimeIntervalConstraints || node is not TimedNode timedNode)
+            {
+                return true;
+            }
+
+            if (StartBefore != default && timedNode.StartTime > StartBefore)
+            {
+                return false;
+            }
+
+            if (StartAfter != default && timedNode.StartTime < StartAfter)
+            {
+                return false;
+            }
+
+            if (EndBefore != default && timedNode.EndTime > EndBefore)
+            {
+                return false;
+            }
+
+            if (EndAfter != default && timedNode.EndTime < EndAfter)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        public static bool IsUnder(NodeQueryMatcher matcher, BaseNode node)
         {
             if (matcher.UnderProject)
             {
-                var project = result.Node.GetNearestParent<Project>();
-                if (project != null && matcher.IsMatch(project) != null)
-                {
-                    return true;
-                }
-
-                var projectEvaluation = result.Node.GetNearestParent<ProjectEvaluation>();
-                if (projectEvaluation != null && matcher.IsMatch(projectEvaluation) != null)
+                var project = node.GetNearestParent<TimedNode>(p => p is Project or ProjectEvaluation);
+                if (project != null &&
+                    matcher.IsMatch(project) != null &&
+                    matcher.IsTimeIntervalMatch(project))
                 {
                     return true;
                 }
@@ -621,9 +768,9 @@ namespace StructuredLogViewer
                 return false;
             }
 
-            foreach (var parent in result.Node.GetParentChainExcludingThis())
+            foreach (var parent in node.GetParentChainExcludingThis())
             {
-                if (matcher.IsMatch(parent) != null)
+                if (matcher.IsMatch(parent) != null && matcher.IsTimeIntervalMatch(parent))
                 {
                     return true;
                 }
