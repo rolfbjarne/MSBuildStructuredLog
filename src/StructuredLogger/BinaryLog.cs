@@ -1,7 +1,9 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using static Microsoft.Build.Logging.StructuredLogger.BinLogReader;
 
 namespace Microsoft.Build.Logging.StructuredLogger
 {
@@ -26,8 +28,11 @@ namespace Microsoft.Build.Logging.StructuredLogger
         }
 
         public static Build ReadBuild(string filePath) => ReadBuild(filePath, progress: null);
+        public static Build ReadBuild(string filePath, Progress progress) => ReadBuild(filePath, progress, readerSettings: null);
+        public static Build ReadBuild(string filePath, ReaderSettings readerSettings)
+            => ReadBuild(filePath, progress: null, readerSettings);
 
-        public static Build ReadBuild(string filePath, Progress progress)
+        public static Build ReadBuild(string filePath, Progress progress, ReaderSettings readerSettings)
         {
             using (var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
@@ -38,7 +43,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     projectImportsArchive = File.ReadAllBytes(projectImportsZipFile);
                 }
 
-                var build = ReadBuild(stream, progress, projectImportsArchive);
+                var build = ReadBuild(stream, progress, projectImportsArchive, readerSettings);
                 build.LogFilePath = filePath;
                 return build;
             }
@@ -48,11 +53,19 @@ namespace Microsoft.Build.Logging.StructuredLogger
             => ReadBuild(stream, progress: null, projectImportsArchive: projectImportsArchive);
 
         public static Build ReadBuild(Stream stream, Progress progress, byte[] projectImportsArchive = null)
-        {
-            var eventSource = new BinLogReader();
+            => ReadBuild(stream, progress, projectImportsArchive, readerSettings: null);
 
+        public static Build ReadBuild(
+            Stream stream,
+            Progress progress,
+            byte[] projectImportsArchive = null,
+            ReaderSettings readerSettings = null)
+        {
             Build build = null;
             IEnumerable<string> strings = null;
+            readerSettings ??= ReaderSettings.Default;
+
+            var eventSource = new BinLogReader();
 
             eventSource.OnBlobRead += (kind, bytes) =>
             {
@@ -72,6 +85,23 @@ namespace Microsoft.Build.Logging.StructuredLogger
             {
                 strings = s;
             };
+            int[] errorByType = new int[Enum.GetValues(typeof(ReaderErrorType)).Length];
+            eventSource.RecoverableReadError += eArg =>
+            {
+                if (readerSettings.UnknownDataBehavior == UnknownDataBehavior.ThrowException)
+                {
+                    throw new Exception($"Unknown data encountered in the log file ({eArg.ErrorType}-{eArg.RecordKind}): {eArg.GetFormattedMessage()}");
+                }
+
+                if (readerSettings.UnknownDataBehavior == UnknownDataBehavior.Ignore)
+                {
+                    return;
+                }
+
+                errorByType[(int)eArg.ErrorType] += 1;
+            };
+
+            //build.AddChild(new );
 
             StructuredLogger.SaveLogToDisk = false;
             StructuredLogger.CurrentBuild = null;
@@ -130,6 +160,24 @@ namespace Microsoft.Build.Logging.StructuredLogger
             // strings = build.StringTable.Instances.OrderBy(s => s).ToArray();
 
             // Serialization.WriteStringsToFile(@"C:\temp\1.txt", strings.ToArray());
+
+            build.WaitForBackgroundTasks();
+
+            if (errorByType.Any(i => i != 0))
+            {
+                string summary = string.Join(", ", errorByType.Where((count, index) => count > 0).Select((count, index) => $"{((ReaderErrorType)index)}: {count}"));
+                string message = $"{errorByType.Sum()} reading errors encountered ({summary}) - unknown data was skipped in current compatibility mode.";
+
+                TreeNode node = readerSettings.UnknownDataBehavior switch
+                {
+                    UnknownDataBehavior.Error => new Error() { Text = message },
+                    UnknownDataBehavior.Warning => new Warning() { Text = message },
+                    UnknownDataBehavior.Message => new CriticalBuildMessage() { Text = message },
+                    _ => throw new ArgumentOutOfRangeException(nameof(readerSettings.UnknownDataBehavior), readerSettings.UnknownDataBehavior, "Unexpected value")
+                };
+
+                build.AddChildAtBeginning(node);
+            }
 
             return build;
         }

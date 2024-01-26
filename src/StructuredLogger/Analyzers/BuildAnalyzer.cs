@@ -36,6 +36,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
             cppAnalyzer = new CppAnalyzer();
             fileCopyMap = new FileCopyMap();
             build.FileCopyMap = fileCopyMap;
+            build.SearchExtensions.Add(fileCopyMap);
         }
 
         public static void AnalyzeBuild(Build build)
@@ -56,7 +57,6 @@ namespace Microsoft.Build.Logging.StructuredLogger
             int index = 0;
             build.VisitAllChildren<TreeNode>(t =>
             {
-                t.Seal();
                 if (t is TimedNode timedNode)
                 {
                     timedNode.Index = index;

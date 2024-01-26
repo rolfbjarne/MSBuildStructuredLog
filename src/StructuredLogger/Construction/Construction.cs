@@ -28,8 +28,6 @@ namespace Microsoft.Build.Logging.StructuredLogger
         private readonly MessageProcessor messageProcessor;
         private readonly StringCache stringTable;
 
-        internal bool PopulatePropertiesAndItemsInBackground = PlatformUtilities.HasThreads;
-
         public StringCache StringTable => stringTable;
 
         public NamedNode EvaluationFolder => Build.EvaluationFolder;
@@ -61,22 +59,32 @@ namespace Microsoft.Build.Logging.StructuredLogger
             Intern(Strings.UnusedLocations);
             Intern(Strings.Warnings);
             Intern(nameof(AddItem));
+            Intern(nameof(CriticalBuildMessage));
             Intern(nameof(CopyTask));
+            Intern(nameof(RobocopyTask));
             Intern(nameof(CscTask));
+            Intern(nameof(VbcTask));
+            Intern(nameof(FscTask));
+            Intern(nameof(MSBuildTask));
             Intern(nameof(ResolveAssemblyReferenceTask));
             Intern(nameof(EntryTarget));
+            Intern(nameof(Error));
             Intern(nameof(Folder));
             Intern(nameof(Import));
             Intern(nameof(Item));
+            Intern(nameof(Message));
             Intern(nameof(Metadata));
             Intern(nameof(NoImport));
+            Intern(nameof(Package));
             Intern(nameof(Parameter));
+            Intern(nameof(Project));
             Intern(nameof(ProjectEvaluation));
             Intern(nameof(Property));
             Intern(nameof(RemoveItem));
             Intern(nameof(Target));
             Intern(nameof(Task));
             Intern(nameof(TimedNode));
+            Intern(nameof(Warning));
         }
 
         public void Shutdown()
@@ -352,12 +360,23 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
             messageText = Intern(messageText);
 
-            var target = AddTargetCore(
-                args,
-                targetName,
-                Intern(args.ParentTarget),
-                Intern(args.TargetFile),
-                args.BuildReason);
+            Target target = null;
+
+            var project = GetProject(args.BuildEventContext.ProjectContextId);
+            if (project != null && args.BuildEventContext.TargetId != BuildEventContext.InvalidTargetId)
+            {
+                target = project.FindLastChild<Target>(t => t.Id == args.BuildEventContext.TargetId);
+            }
+
+            if (target == null)
+            {
+                target = AddTargetCore(
+                    args,
+                    targetName,
+                    Intern(args.ParentTarget),
+                    Intern(args.TargetFile),
+                    args.BuildReason);
+            }
 
             if (originalBuildEventContext != null && originalBuildEventContext.ProjectContextId != BuildEventContext.InvalidProjectContextId)
             {
@@ -445,8 +464,6 @@ namespace Microsoft.Build.Logging.StructuredLogger
             }
         }
 
-        private bool sawCulture = false;
-
         public void MessageRaised(object sender, BuildMessageEventArgs args)
         {
             try
@@ -457,20 +474,6 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     {
                         TargetSkipped(targetSkipped);
                         return;
-                    }
-
-                    if (!sawCulture &&
-                        args.SenderName == "BinaryLogger" &&
-                        args.Message is string message &&
-                        message.StartsWith("CurrentUICulture", StringComparison.Ordinal))
-                    {
-                        sawCulture = true;
-                        var kvp = TextUtilities.ParseNameValue(message);
-                        string culture = kvp.Value;
-                        if (!string.IsNullOrEmpty(culture))
-                        {
-                            Strings.Initialize(culture);
-                        }
                     }
 
                     messageProcessor.Process(args);
@@ -566,14 +569,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                             propertiesFolder.DisableChildrenCache = true;
                         }
 
-                        if (PopulatePropertiesAndItemsInBackground)
-                        {
-                            System.Threading.Tasks.Task.Run(() => AddGlobalProperties());
-                        }
-                        else
-                        {
-                            AddGlobalProperties();
-                        }
+                        Build.RunInBackground(() => AddGlobalProperties());
 
                         void AddGlobalProperties()
                         {
@@ -988,14 +984,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     propertyFolder.DisableChildrenCache = true;
                 }
 
-                if (PopulatePropertiesAndItemsInBackground)
-                {
-                    System.Threading.Tasks.Task.Run(() => AddGlobalProperties());
-                }
-                else
-                {
-                    AddGlobalProperties();
-                }
+                Build.RunInBackground(() => AddGlobalProperties());
 
                 void AddGlobalProperties()
                 {

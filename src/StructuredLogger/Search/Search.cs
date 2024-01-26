@@ -32,18 +32,28 @@ namespace StructuredLogViewer
         {
             var resultSet = new List<SearchResult>();
 
-            var matcher = new NodeQueryMatcher(query, strings, cancellationToken);
-            if (matcher.IsCopy)
+            var matcher = new NodeQueryMatcher(query);
+
+            if (roots.FirstOrDefault() is Build build)
             {
-                if (roots.FirstOrDefault() is Build build && build.FileCopyMap is { } fileCopyMap)
+                foreach (var searchExtension in build.SearchExtensions)
                 {
-                    fileCopyMap.GetResults(matcher, resultSet);
-                    return resultSet;
+                    if (searchExtension.TryGetResults(matcher, resultSet, maxResults))
+                    {
+                        return resultSet;
+                    }
                 }
             }
 
+            matcher.Initialize(strings, cancellationToken);
+
             foreach (var root in roots)
             {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
                 Visit(root, matcher, resultSet, cancellationToken);
             }
 

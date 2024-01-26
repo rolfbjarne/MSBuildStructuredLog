@@ -41,7 +41,9 @@ namespace StructuredLogViewer.Controls
         private MenuItem copySubtreeItem;
         private MenuItem viewSubtreeTextItem;
         private MenuItem searchInSubtreeItem;
+        private MenuItem searchInNodeByNameItem;
         private MenuItem excludeSubtreeFromSearchItem;
+        private MenuItem excludeNodeByNameFromSearch;
         private MenuItem goToTimeLineItem;
         private MenuItem goToTracingItem;
         private MenuItem copyChildrenItem;
@@ -53,6 +55,7 @@ namespace StructuredLogViewer.Controls
         private MenuItem openFileItem;
         private MenuItem copyFilePathItem;
         private MenuItem preprocessItem;
+        private MenuItem searchNuGetItem;
         private MenuItem runItem;
         private MenuItem debugItem;
         private MenuItem hideItem;
@@ -147,21 +150,27 @@ namespace StructuredLogViewer.Controls
 
             // Search Log | Properties and Items | Find in Files
             sharedTreeContextMenu = new ContextMenu();
+            var sharedCopyItem = new MenuItem() { Header = "Copy" };
             var sharedCopyAllItem = new MenuItem() { Header = "Copy All" };
             var sharedCopySubtreeItem = new MenuItem() { Header = "Copy subtree" };
+            sharedCopyItem.Click += (s, a) => Copy();
             sharedCopyAllItem.Click += (s, a) => CopyAll();
             sharedCopySubtreeItem.Click += (s, a) => CopySubtree();
+            sharedTreeContextMenu.AddItem(sharedCopyItem);
             sharedTreeContextMenu.AddItem(sharedCopyAllItem);
             sharedTreeContextMenu.AddItem(sharedCopySubtreeItem);
 
             // Files
             filesTreeContextMenu = new ContextMenu();
+            var filesCopyItem = new MenuItem { Header = "Copy" };
             var filesCopyAllItem = new MenuItem { Header = "Copy All" };
             var filesCopyPathsItem = new MenuItem { Header = "Copy file paths" };
             var filesCopySubtreeItem = new MenuItem { Header = "Copy subtree" };
+            filesCopyItem.Click += (s, a) => Copy();
             filesCopyAllItem.Click += (s, a) => CopyAll();
             filesCopyPathsItem.Click += (s, a) => CopyPaths();
             filesCopySubtreeItem.Click += (s, a) => CopySubtree();
+            filesTreeContextMenu.AddItem(filesCopyItem);
             filesTreeContextMenu.AddItem(filesCopyAllItem);
             filesTreeContextMenu.AddItem(filesCopyPathsItem);
             filesTreeContextMenu.AddItem(filesCopySubtreeItem);
@@ -174,6 +183,8 @@ namespace StructuredLogViewer.Controls
             viewSubtreeTextItem = new MenuItem() { Header = "View subtree text" };
             searchInSubtreeItem = new MenuItem() { Header = "Search in subtree" };
             excludeSubtreeFromSearchItem = new MenuItem() { Header = "Exclude subtree from search" };
+            excludeNodeByNameFromSearch = new MenuItem() { Header = "Exclude node from search" };
+            searchInNodeByNameItem = new MenuItem() { Header = "Search in this node." };
             goToTimeLineItem = new MenuItem() { Header = "Go to timeline" };
             goToTracingItem = new MenuItem() { Header = "Go to tracing" };
             copyChildrenItem = new MenuItem() { Header = "Copy children" };
@@ -186,6 +197,16 @@ namespace StructuredLogViewer.Controls
             openFileItem = new MenuItem() { Header = "Open File" };
             copyFilePathItem = new MenuItem() { Header = "Copy file path" };
             preprocessItem = new MenuItem() { Header = "Preprocess" };
+            var nugetImage = new System.Windows.Shapes.Path
+            {
+                Data = (Geometry)Application.Current.FindResource("NuGetGeometry"),
+                Stroke = (Brush)Application.Current.FindResource("NuGet"),
+                Fill = (Brush)Application.Current.FindResource("NuGet"),
+                Width = 16,
+                Height = 16,
+                StrokeThickness = 1
+            };
+            searchNuGetItem = new MenuItem() { Header = "Search project.assets.json", Icon = nugetImage };
             hideItem = new MenuItem() { Header = "Hide" };
             runItem = new MenuItem() { Header = "Run" };
             debugItem = new MenuItem() { Header = "Debug" };
@@ -194,6 +215,8 @@ namespace StructuredLogViewer.Controls
             viewSubtreeTextItem.Click += (s, a) => ViewSubtreeText();
             searchInSubtreeItem.Click += (s, a) => SearchInSubtree();
             excludeSubtreeFromSearchItem.Click += (s, a) => ExcludeSubtreeFromSearch();
+            excludeNodeByNameFromSearch.Click += (s, a) => ExcludeNodeByNameFromSearch();
+            searchInNodeByNameItem.Click += (s, a) => SearchInNodeByName();
             goToTimeLineItem.Click += (s, a) => GoToTimeLine();
             goToTracingItem.Click += (s, a) => GoToTracing();
             copyChildrenItem.Click += (s, a) => CopyChildren();
@@ -206,6 +229,7 @@ namespace StructuredLogViewer.Controls
             openFileItem.Click += (s, a) => OpenFile();
             copyFilePathItem.Click += (s, a) => CopyFilePath();
             preprocessItem.Click += (s, a) => Preprocess(treeView.SelectedItem as IPreprocessable);
+            searchNuGetItem.Click += (s, a) => SearchNuGet(treeView.SelectedItem as IProjectOrEvaluation);
             runItem.Click += (s, a) => Run(treeView.SelectedItem as Task, debug: false);
             debugItem.Click += (s, a) => Run(treeView.SelectedItem as Task, debug: true);
             hideItem.Click += (s, a) => Delete();
@@ -216,8 +240,11 @@ namespace StructuredLogViewer.Controls
             contextMenu.AddItem(viewFullTextItem);
             contextMenu.AddItem(openFileItem);
             contextMenu.AddItem(preprocessItem);
+            contextMenu.AddItem(searchNuGetItem);
             contextMenu.AddItem(searchInSubtreeItem);
+            contextMenu.AddItem(searchInNodeByNameItem);
             contextMenu.AddItem(excludeSubtreeFromSearchItem);
+            contextMenu.AddItem(excludeNodeByNameFromSearch);
             contextMenu.AddItem(goToTimeLineItem);
             contextMenu.AddItem(goToTracingItem);
             contextMenu.AddItem(copyItem);
@@ -286,12 +313,12 @@ on the node will navigate to the corresponding source code associated with the n
 
 More functionality is available from the right-click context menu for each node.
 Right-clicking a project node may show the 'Preprocess' option if the version of MSBuild was at least 15.3.";
-                build.Unseal();
 #if DEBUG
                 text = build.StringTable.Intern(text);
 #endif
-                build.AddChild(new Note { Text = text });
-                build.Seal();
+                var folder = new Folder { Name = "Embedded files" };
+                folder.AddChild(new Note { Text = text });
+                build.AddChild(folder);
             }
 
             breadCrumb.SelectionChanged += BreadCrumb_SelectionChanged;
@@ -360,6 +387,8 @@ Right-clicking a project node may show the 'Preprocess' option if the version of
             viewSubtreeTextItem = null;
             searchInSubtreeItem = null;
             excludeSubtreeFromSearchItem = null;
+            excludeNodeByNameFromSearch = null;
+            searchInNodeByNameItem = null;
             goToTimeLineItem = null;
             goToTracingItem = null;
             copyChildrenItem = null;
@@ -371,6 +400,7 @@ Right-clicking a project node may show the 'Preprocess' option if the version of
             openFileItem = null;
             copyFilePathItem = null;
             preprocessItem = null;
+            searchNuGetItem = null;
             runItem = null;
             debugItem = null;
             hideItem = null;
@@ -541,8 +571,6 @@ Right-clicking a project node may show the 'Preprocess' option if the version of
             "is newer than output ",
             "Property reassignment: $(",
             "out-of-date",
-            "csc $task",
-            "ResolveAssemblyReference $task",
             "$task $time",
             "$message CompilerServer failed",
             "will be compiled because",
@@ -599,23 +627,49 @@ Right-clicking a project node may show the 'Preprocess' option if the version of
 
         private void UpdateWatermark()
         {
-            string watermarkText1 = @"Type in the search box to search. Press Ctrl+F to focus the search box. Results (up to 1000) will display here.
+            string watermarkText0 = @"Type in the search box to search. Press Ctrl+F to focus the search box. Results (up to 1000) will display here.
+";
 
+            string watermarkText1 = @"
 Search for multiple words separated by space (space means AND). Enclose multiple words in double-quotes """" to search for the exact phrase. A single word in quotes means exact match (turns off substring search).
 
 Use syntax like '$property Prop' to narrow results down by item kind. Supported kinds: ";
 
             string watermarkText2 = @"Use the under(FILTER) clause to only include results where any of the nodes in the parent chain matches the FILTER. Use project(...) to filter by parent project. Examples:
- • $task csc under($project Core)
+ • $csc under($project Core)
  • Copying file project(ProjectA)
 
 Append [[$time]], [[$start]] and/or [[$end]] to show times and/or durations and sort the results by start time or duration descending (for tasks, targets and projects).
+
 Use start<""2023-11-23 14:30:54.579"", start>, end< or end> to filter events that start or end before or after a given timestamp. Timestamp needs to be in quotes.
+
+Use '$copy path' where path is a file or directory to find file copy operations involving the file or directory. `$copy substring` will search for copied files containing the substring.
+
+Use '$nuget project(MyProject.csproj) Package.Name' to search for NuGet packages (by name or version), dependencies (direct and transitive) and files coming from NuGet packages.
 
 Examples:
 ";
 
             var watermark = new TextBlock();
+            watermark.Inlines.Add(watermarkText0);
+
+            var recentSearches = SettingsService.GetRecentSearchStrings();
+            if (recentSearches.Any())
+            {
+                watermark.Inlines.Add(@"
+Recent (");
+                var clearRecentHyperlink = new Hyperlink(new Run("clear"));
+                clearRecentHyperlink.Click += (s, e) => { SettingsService.RemoveAllRecentSearchText(); UpdateWatermark(); };
+                watermark.Inlines.Add(clearRecentHyperlink);
+                watermark.Inlines.Add(@"):
+");
+
+                foreach (var recentSearch in recentSearches.Where(s => !searchExamples.Contains(s) && !nodeKinds.Contains(s)))
+                {
+                    watermark.Inlines.Add(MakeLink(recentSearch, searchLogControl));
+                }
+            }
+
             watermark.Inlines.Add(watermarkText1);
 
             bool isFirst = true;
@@ -638,19 +692,6 @@ Examples:
             foreach (var example in searchExamples)
             {
                 watermark.Inlines.Add(MakeLink(example, searchLogControl));
-            }
-
-            var recentSearches = SettingsService.GetRecentSearchStrings();
-            if (recentSearches.Any())
-            {
-                watermark.Inlines.Add(@"
-Recent:
-");
-
-                foreach (var recentSearch in recentSearches.Where(s => !searchExamples.Contains(s) && !nodeKinds.Contains(s)))
-                {
-                    watermark.Inlines.Add(MakeLink(recentSearch, searchLogControl));
-                }
             }
 
             searchLogControl.WatermarkContent = watermark;
@@ -677,7 +718,11 @@ Recent:
             if (recentSearches.Any())
             {
                 watermark.Inlines.Add(@"
-Recent:
+Recent (");
+                var clearRecentHyperlink = new Hyperlink(new Run("clear"));
+                clearRecentHyperlink.Click += (s, e) => { SettingsService.RemoveAllRecentSearchText("PropertiesAndItems"); UpdatePropertiesAndItemsWatermark(); };
+                watermark.Inlines.Add(clearRecentHyperlink);
+                watermark.Inlines.Add(@"):
 ");
 
                 foreach (var recentSearch in recentSearches)
@@ -706,6 +751,13 @@ Recent:
                     result.Add(chunk);
                 }
             }
+        }
+
+        private void SearchNuGet(IProjectOrEvaluation node)
+        {
+            string projectName = Path.GetFileName(node.ProjectFile);
+            searchLogControl.SearchText = $"$nuget project({projectName})";
+            SelectSearchTab();
         }
 
         private void Preprocess(IPreprocessable project) => preprocessedFileManager.ShowPreprocessed(project);
@@ -794,18 +846,45 @@ Recent:
             var hasChildren = node is TreeNode t && t.HasChildren;
             copySubtreeItem.Visibility = hasChildren ? Visibility.Visible : Visibility.Collapsed;
             viewSubtreeTextItem.Visibility = copySubtreeItem.Visibility;
-            showTimeItem.Visibility = node is TimedNode ? Visibility.Visible : Visibility.Collapsed;
-            searchInSubtreeItem.Visibility = hasChildren && node is TimedNode ? Visibility.Visible : Visibility.Collapsed;
-            excludeSubtreeFromSearchItem.Visibility = hasChildren && node is TimedNode ? Visibility.Visible : Visibility.Collapsed;
-            goToTimeLineItem.Visibility = node is TimedNode ? Visibility.Visible : Visibility.Collapsed;
-            goToTracingItem.Visibility = node is TimedNode ? Visibility.Visible : Visibility.Collapsed;
             copyChildrenItem.Visibility = copySubtreeItem.Visibility;
             sortChildrenItem.Visibility = copySubtreeItem.Visibility;
             preprocessItem.Visibility = node is IPreprocessable p && preprocessedFileManager.CanPreprocess(p) ? Visibility.Visible : Visibility.Collapsed;
+            searchNuGetItem.Visibility = node is IProjectOrEvaluation ? Visibility.Visible : Visibility.Collapsed;
             Visibility canRun = Build?.LogFilePath != null && node is Task ? Visibility.Visible : Visibility.Collapsed;
             runItem.Visibility = canRun;
             debugItem.Visibility = canRun;
             hideItem.Visibility = node is TreeNode ? Visibility.Visible : Visibility.Collapsed;
+
+            if (node is TimedNode timedNode)
+            {
+                showTimeItem.Visibility = Visibility.Visible;
+                searchInSubtreeItem.Visibility = hasChildren ? Visibility.Visible : Visibility.Collapsed;
+                excludeSubtreeFromSearchItem.Visibility = hasChildren ? Visibility.Visible : Visibility.Collapsed;
+                goToTimeLineItem.Visibility = Visibility.Visible;
+                goToTracingItem.Visibility = Visibility.Visible;
+                excludeNodeByNameFromSearch.Visibility = hasChildren ? Visibility.Visible : Visibility.Collapsed;
+                searchInNodeByNameItem.Visibility = hasChildren ? Visibility.Visible : Visibility.Collapsed;
+
+                if (excludeNodeByNameFromSearch.Visibility == Visibility.Visible)
+                {
+                    excludeNodeByNameFromSearch.Header = $"Exclude '{timedNode.Name}' from search";
+                }
+
+                if (searchInNodeByNameItem.Visibility == Visibility.Visible)
+                {
+                    searchInNodeByNameItem.Header = $"Search in '{timedNode.Name}'";
+                }
+            }
+            else
+            {
+                showTimeItem.Visibility = Visibility.Collapsed;
+                searchInSubtreeItem.Visibility = Visibility.Collapsed;
+                excludeSubtreeFromSearchItem.Visibility = Visibility.Collapsed;
+                goToTimeLineItem.Visibility = Visibility.Collapsed;
+                goToTracingItem.Visibility = Visibility.Collapsed;
+                excludeNodeByNameFromSearch.Visibility = Visibility.Collapsed;
+                searchInNodeByNameItem.Visibility = Visibility.Collapsed;
+            }
         }
 
         private object FindInFiles(string searchText, int maxResults, CancellationToken cancellationToken)
@@ -1311,11 +1390,6 @@ Recent:
                 Delete();
                 args.Handled = true;
             }
-            else if (args.Key == Key.C && args.KeyboardDevice.Modifiers == ModifierKeys.Control)
-            {
-                CopySubtree();
-                args.Handled = true;
-            }
             else if (args.Key >= Key.A && args.Key <= Key.Z && args.KeyboardDevice.Modifiers == ModifierKeys.None)
             {
                 SelectItemByKey((char)('A' + args.Key - Key.A));
@@ -1409,7 +1483,8 @@ Recent:
 
         public void Copy()
         {
-            var treeNode = treeView.SelectedItem;
+            var tree = ActiveTreeView;
+            var treeNode = tree?.SelectedItem;
             if (treeNode != null)
             {
                 var text = treeNode.ToString();
@@ -1419,7 +1494,7 @@ Recent:
 
         public void CopySubtree(TreeView tree = null)
         {
-            tree = tree ?? ActiveTreeView;
+            tree ??= ActiveTreeView;
             if (tree == null)
             {
                 return;
@@ -1485,11 +1560,29 @@ Recent:
             }
         }
 
+        public void SearchInNodeByName()
+        {
+            if (treeView.SelectedItem is TimedNode treeNode)
+            {
+                searchLogControl.SearchText += $" under(${treeNode.TypeName} {treeNode.Name})";
+                SelectSearchTab();
+            }
+        }
+
         public void ExcludeSubtreeFromSearch()
         {
             if (treeView.SelectedItem is TimedNode treeNode)
             {
                 searchLogControl.SearchText += $" notunder(${treeNode.Index})";
+                SelectSearchTab();
+            }
+        }
+
+        public void ExcludeNodeByNameFromSearch()
+        {
+            if (treeView.SelectedItem is TimedNode treeNode)
+            {
+                searchLogControl.SearchText += $" notunder(${treeNode.TypeName} {treeNode.Name})";
                 SelectSearchTab();
             }
         }
@@ -1542,7 +1635,7 @@ Recent:
 
         private void CopyAll(TreeView tree = null)
         {
-            tree = tree ?? ActiveTreeView;
+            tree ??= ActiveTreeView;
             if (tree == null)
             {
                 return;
@@ -1664,6 +1757,12 @@ Recent:
                 {
                     args.Handled = Invoke(treeNode) || ViewFullText(treeNode);
                 }
+            }
+
+            if (args.Key == Key.C && args.KeyboardDevice.Modifiers == ModifierKeys.Control)
+            {
+                Copy();
+                args.Handled = true;
             }
 
             if (args.Key == Key.Escape)
@@ -2008,8 +2107,6 @@ Recent:
 
             var recordStats = BinlogStats.Calculate(this.LogFilePath);
             var records = recordStats.CategorizedRecords;
-
-            Build.Unseal();
 
             statsRoot = DisplayRecordStats(records, Build);
 

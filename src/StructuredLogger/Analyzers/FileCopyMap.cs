@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using StructuredLogViewer;
 
 namespace Microsoft.Build.Logging.StructuredLogger
@@ -55,9 +56,15 @@ namespace Microsoft.Build.Logging.StructuredLogger
         }
     }
 
-    public class FileCopyMap
+    public class FileCopyMap : ISearchExtension
     {
+        private static char[] separators = new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar };
+        private static readonly string DirectorySeparator = Path.DirectorySeparatorChar.ToString();
+        private static readonly string AltDirectorySeparator = Path.AltDirectorySeparatorChar.ToString();
+
         private Dictionary<string, DirectoryData> directories = new Dictionary<string, DirectoryData>(StringComparer.OrdinalIgnoreCase);
+
+        public event Action<FileData, IList<SearchResult>> FoundSingleFileCopy;
 
         public void AnalyzeTask(Task task)
         {
@@ -97,10 +104,10 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 destination = Path.Combine(project.ProjectDirectory, destination);
             }
 
-            source = Path.GetFullPath(source);
-            destination = Path.GetFullPath(destination);
+            source = TextUtilities.NormalizeFilePath(source);
+            destination = TextUtilities.NormalizeFilePath(destination);
 
-            if (string.Equals(source, destination))
+            if (string.Equals(source, destination, StringComparison.OrdinalIgnoreCase))
             {
                 return;
             }
@@ -153,10 +160,6 @@ namespace Microsoft.Build.Logging.StructuredLogger
             }
         }
 
-        private static char[] separators = new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar };
-        private static readonly string DirectorySeparator = Path.DirectorySeparatorChar.ToString();
-        private static readonly string AltDirectorySeparator = Path.AltDirectorySeparatorChar.ToString();
-
         public DirectoryData GetDirectory(string path, bool create = true)
         {
             if (path.Length > 3)
@@ -193,8 +196,20 @@ namespace Microsoft.Build.Logging.StructuredLogger
             }
         }
 
-        public void GetResults(NodeQueryMatcher matcher, IList<SearchResult> resultSet)
+        public bool TryGetResults(NodeQueryMatcher matcher, IList<SearchResult> resultSet, int maxResults)
         {
+            if (!string.Equals(matcher.TypeKeyword, "copy", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (matcher.Terms.Count == 0)
+            {
+                resultSet.Add(new SearchResult(new Note { Text = "Specify a directory or file path, or a partial file name" }));
+
+                return true;
+            }
+
             if (matcher.Terms.Count == 1)
             {
                 var word = matcher.Terms[0];
@@ -203,16 +218,122 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 object data = TryGetDirectoryOrFile(text);
                 if (data is DirectoryData directoryData)
                 {
-                    GetResults(directoryData, resultSet);
+                    GetResults(directoryData, resultSet, maxResults);
                 }
                 else if (data is FileData fileData)
                 {
-                    GetResults(fileData, resultSet);
+                    GetResults(fileData, resultSet, maxResults);
+                    if (resultSet.Count == 1)
+                    {
+                        FoundSingleFileCopy?.Invoke(fileData, resultSet);
+                        TryExplainSingleFileCopy(fileData, resultSet);
+                    }
+                }
+                else
+                {
+                    TryGetFiles(text, resultSet, maxResults);
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+
+        private void TryExplainSingleFileCopy(FileData fileData, IList<SearchResult> resultSet)
+        {
+            var fileCopyInfo = fileData.Incoming.FirstOrDefault() ?? fileData.Outgoing.FirstOrDefault();
+            var project = fileCopyInfo.Project;
+
+            var filePath = fileData.FilePath;
+            if (fileData.Incoming.Count == 1)
+            {
+                filePath = fileCopyInfo.FileCopyOperation.Source;
+            }
+
+            var fileName = Path.GetFileName(filePath);
+
+            var build = project.GetRoot() as Build;
+            if (build == null)
+            {
+                return;
+            }
+
+            var evaluation = build.FindEvaluation(project.EvaluationId);
+            if (evaluation == null)
+            {
+                return;
+            }
+
+            var itemsFolder = evaluation.FindChild<NamedNode>("Items");
+            if (itemsFolder == null)
+            {
+                return;
+            }
+
+            FindCopyToOutputDirectoryItem(resultSet, itemsFolder, fileName, "None");
+            FindCopyToOutputDirectoryItem(resultSet, itemsFolder, fileName, "Content");
+        }
+
+        private static void FindCopyToOutputDirectoryItem(IList<SearchResult> resultSet, NamedNode itemsFolder, string fileName, string itemName)
+        {
+            var addItem = itemsFolder.FindChild<AddItem>(itemName);
+            if (addItem != null)
+            {
+                foreach (var item in addItem.Children.OfType<Item>())
+                {
+                    string name = Path.GetFileName(item.Name);
+                    if (fileName.Equals(name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (item.FindChild<Metadata>("CopyToOutputDirectory") is { } metadata && (metadata.Value == "Always" || metadata.Value == "PreserveNewest"))
+                        {
+                            resultSet.Add(new SearchResult(item));
+                        }
+                    }
                 }
             }
         }
 
-        private void GetResults(FileData fileData, IList<SearchResult> resultSet, string matchText = null)
+        private void TryGetFiles(string text, IList<SearchResult> resultSet, int maxResults)
+        {
+            var results = new List<SearchResult>();
+
+            lock (directories)
+            {
+                foreach (var kvp in directories)
+                {
+                    var directoryData = kvp.Value;
+                    foreach (var file in directoryData.Files)
+                    {
+                        if (file.FilePath.IndexOf(text, StringComparison.OrdinalIgnoreCase) != -1)
+                        {
+                            var item = new Item { Name = file.FilePath };
+                            var result = new SearchResult(item);
+                            result.AddMatch(file.FilePath, text);
+                            results.Add(result);
+                            if (results.Count >= maxResults)
+                            {
+                                break;
+                            }
+                        }
+                    }
+
+                    if (results.Count >= maxResults)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            results.Sort((l, r) => l.Node.Title.CompareTo(r.Node.Title));
+
+            foreach (var result in results)
+            {
+                resultSet.Add(result);
+            }
+        }
+
+        private void GetResults(FileData fileData, IList<SearchResult> resultSet, int maxResults, string matchText = null)
         {
             if (matchText == null)
             {
@@ -226,6 +347,10 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 result.AddMatch(message.Text, matchText);
                 result.RootFolder = "Incoming";
                 resultSet.Add(result);
+                if (resultSet.Count >= maxResults)
+                {
+                    return;
+                }
             }
 
             foreach (var outgoing in fileData.Outgoing)
@@ -235,16 +360,24 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 result.AddMatch(message.Text, matchText);
                 result.RootFolder = "Outgoing";
                 resultSet.Add(result);
+                if (resultSet.Count >= maxResults)
+                {
+                    return;
+                }
             }
         }
 
-        private void GetResults(DirectoryData directoryData, IList<SearchResult> resultSet)
+        private void GetResults(DirectoryData directoryData, IList<SearchResult> resultSet, int maxResults)
         {
             string directoryPath = directoryData.ToString();
 
             foreach (var fileData in directoryData.Files)
             {
-                GetResults(fileData, resultSet, matchText: directoryPath);
+                GetResults(fileData, resultSet, maxResults, matchText: directoryPath);
+                if (resultSet.Count >= maxResults)
+                {
+                    return;
+                }
             }
         }
 

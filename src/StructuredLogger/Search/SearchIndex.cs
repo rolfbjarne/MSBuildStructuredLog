@@ -275,12 +275,12 @@ namespace Microsoft.Build.Logging.StructuredLogger
             List<SearchResult> results = new();
             typeKeyword = 0;
 
-            var matcher = new NodeQueryMatcher(query, stringTable: null, cancellationToken);
-            if (matcher.IsCopy)
+            var matcher = new NodeQueryMatcher(query);
+
+            foreach (var searchExtension in build.SearchExtensions)
             {
-                if (build.FileCopyMap is { } fileCopyMap)
+                if (searchExtension.TryGetResults(matcher, results, MaxResults))
                 {
-                    fileCopyMap.GetResults(matcher, results);
                     return results;
                 }
             }
@@ -342,6 +342,11 @@ namespace Microsoft.Build.Logging.StructuredLogger
                                 break;
                             }
                         }
+                    }
+
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        break;
                     }
 
                     if (results.Count >= MaxResults)

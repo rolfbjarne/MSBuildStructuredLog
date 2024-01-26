@@ -49,7 +49,7 @@ namespace StructuredLogViewer
 
                 string evaluationKey = GetEvaluationKey(projectEvaluation);
                 var importMap = GetOrCreateImportMap(evaluationKey, projectEvaluation.ProjectFile);
-                System.Threading.Tasks.Task.Run(() =>
+                build.RunInBackground(() =>
                 {
                     imports.VisitAllChildren<Import>(import => VisitImport(import, importMap));
                 });
@@ -173,6 +173,10 @@ namespace StructuredLogViewer
             }
 
             var sourceText = sourceFileResolver.GetSourceFileText(sourceFilePath);
+            if (sourceText == null)
+            {
+                return string.Empty;
+            }
 
             var importMap = GetImportMap(projectEvaluationContext);
             if (importMap == null)
