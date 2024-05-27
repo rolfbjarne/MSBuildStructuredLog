@@ -8,7 +8,27 @@ namespace Microsoft.Build.Logging.StructuredLogger
 {
     public class ProxyNode : TextNode
     {
-        public BaseNode Original { get; set; }
+        private BaseNode original;
+        public BaseNode Original
+        {
+            get => original;
+            set
+            {
+                if (original == value)
+                {
+                    return;
+                }
+
+                original = value;
+                if (original != null)
+                {
+                    if (Text == null)
+                    {
+                        Text = GetNodeText(original);
+                    }
+                }
+            }
+        }
 
         public SearchResult SearchResult { get; set; }
 
@@ -27,7 +47,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
             }
         }
 
-        public static string GetNodeText(BaseNode node)
+        public static string GetNodeText(BaseNode node, bool includeType = true)
         {
             if (node == null)
             {
@@ -45,11 +65,22 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     return $"{evaluation.Name} {evaluation.AdornmentString} {evaluation.EvaluationText}";
                 }
 
-                return namedNode.Name;
+                string text = namedNode.Name;
+
+                if (node is not Folder and not Item && includeType && node.GetType() != typeof(TimedNode))
+                {
+                    text = $"{node.TypeName} {text}";
+                }
+
+                return text;
             }
             else if (node is TextNode textNode)
             {
                 return textNode.Text;
+            }
+            else if (node is NameValueNode nameValue)
+            {
+                return $"{nameValue.Name}={nameValue.Value}";
             }
 
             return node.Title;
@@ -57,8 +88,11 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
         public void Populate(SearchResult result)
         {
+            var highlights = this.highlights;
+
             if (result == null)
             {
+                highlights.Add(Text);
                 return;
             }
 
@@ -68,10 +102,10 @@ namespace Microsoft.Build.Logging.StructuredLogger
             {
                 if (result.MatchedByType)
                 {
-                    Highlights.Add(new HighlightedText { Text = OriginalType });
+                    highlights.Add(new HighlightedText { Text = OriginalType });
                 }
 
-                Highlights.Add((Highlights.Count > 0 ? " " : "") + TextUtilities.ShortenValue(GetNodeText(node), "..."));
+                highlights.Add((highlights.Count > 0 ? " " : "") + TextUtilities.ShortenValue(GetNodeText(node, includeType: false), "..."));
 
                 AddDuration(result);
 
@@ -79,13 +113,15 @@ namespace Microsoft.Build.Logging.StructuredLogger
             }
 
             string typePrefix = OriginalType;
+            bool addedTypePrefix = false;
             if (typePrefix != Strings.Folder &&
                 typePrefix != Strings.Item &&
                 typePrefix != Strings.Metadata &&
                 typePrefix != Strings.Property &&
                 typePrefix != "Package")
             {
-                Highlights.Add(typePrefix);
+                highlights.Add(typePrefix);
+                addedTypePrefix = true;
             }
 
             // NameValueNode is special case: have to show name=value when searched only in one (name or value)
@@ -121,10 +157,10 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
             if (namedNode != null && !namedNodeNameFound)
             {
-                Highlights.Add((Highlights.Count > 0 ? " " : "") + namedNode.Name);
+                highlights.Add((highlights.Count > 0 ? " " : "") + namedNode.Name);
                 if (GetNodeDifferentiator(node) is object differentiator)
                 {
-                    Highlights.Add(differentiator);
+                    highlights.Add(differentiator);
                 }
             }
 
@@ -145,32 +181,33 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     }
 
                     return (f, (IEnumerable<string>)matches);
-                });
+                }).ToArray();
             }
             else
             {
                 fieldsWithMatches = result.WordsInFields
                     .GroupBy(t => t.field, t => t.match)
-                    .Select(g => (g.Key, (IEnumerable<string>)g));
+                    .Select(g => (g.Key, (IEnumerable<string>)g))
+                    .ToArray();
             }
 
             foreach (var wordsInField in fieldsWithMatches)
             {
                 var fieldText = wordsInField.Key;
-                if (fieldText == OriginalType || (node is Task task && task.IsDerivedTask))
+                if (fieldText == typePrefix && addedTypePrefix)
                 {
-                    // OriginalType already added above
+                    // already added above
                     continue;
                 }
 
-                if (Highlights.Count > 0)
+                if (highlights.Count > 0)
                 {
-                    Highlights.Add(" ");
+                    highlights.Add(" ");
                 }
 
                 if (nameValueNode != null && fieldText.Equals(nameValueNode.Value) && !nameFound)
                 {
-                    Highlights.Add(nameValueNode.Name + " = ");
+                    highlights.Add(nameValueNode.Name + " = ");
                 }
 
                 fieldText = TextUtilities.ShortenValue(fieldText, "...");
@@ -181,27 +218,27 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 {
                     if (span.Start > index)
                     {
-                        Highlights.Add(fieldText.Substring(index, span.Start - index));
+                        highlights.Add(fieldText.Substring(index, span.Start - index));
                     }
 
-                    Highlights.Add(new HighlightedText { Text = fieldText.Substring(span.Start, span.Length) });
+                    highlights.Add(new HighlightedText { Text = fieldText.Substring(span.Start, span.Length) });
                     index = span.End;
                 }
 
                 if (index < fieldText.Length)
                 {
-                    Highlights.Add(fieldText.Substring(index, fieldText.Length - index));
+                    highlights.Add(fieldText.Substring(index, fieldText.Length - index));
                 }
 
                 if (nameValueNode != null && fieldText.Equals(nameValueNode.Name))
                 {
                     if (!valueFound)
                     {
-                        Highlights.Add(" = " + TextUtilities.ShortenValue(nameValueNode.Value, "..."));
+                        highlights.Add(" = " + TextUtilities.ShortenValue(nameValueNode.Value, "..."));
                     }
                     else
                     {
-                        Highlights.Add(" = ");
+                        highlights.Add(" = ");
                     }
                 }
 
@@ -209,12 +246,22 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 {
                     if (GetNodeDifferentiator(node) is object differentiator)
                     {
-                        Highlights.Add(differentiator);
+                        highlights.Add(differentiator);
                     }
                 }
             }
 
             AddDuration(result);
+
+            if (highlights.Count == 0)
+            {
+                if (Original is Target or Task or AddItem or RemoveItem)
+                {
+                    highlights.Add(OriginalType + " ");
+                }
+
+                highlights.Add(Title);
+            }
         }
 
         private object GetNodeDifferentiator(BaseNode node)

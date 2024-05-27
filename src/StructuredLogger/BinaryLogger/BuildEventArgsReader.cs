@@ -910,6 +910,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
             var taskName = ReadOptionalString();
             var projectFile = ReadOptionalString();
             var taskFile = ReadOptionalString();
+            var taskAssemblyLocation = _fileFormatVersion >= 20 ? ReadOptionalString() : null;
 
             string message = fields.Message;
             if (_fileFormatVersion >= 13)
@@ -926,6 +927,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 fields.Timestamp);
             e.LineNumber = fields.LineNumber;
             e.ColumnNumber = fields.ColumnNumber;
+            e.TaskAssemblyLocation = taskAssemblyLocation;
             SetCommonFields(e, fields);
             return e;
         }
@@ -1147,10 +1149,15 @@ namespace Microsoft.Build.Logging.StructuredLogger
             var kind = (TaskParameterMessageKind)ReadInt32();
             var itemType = ReadDeduplicatedString() ?? "N/A";
             var items = ReadTaskItemList() as IList ?? Array.Empty<ITaskItem>();
+            var (parameterName, propertyName) = _fileFormatVersion >= 21
+                ? (ReadDeduplicatedString(), ReadDeduplicatedString())
+                : (null, null);
 
             var e = ItemGroupLoggingHelper.CreateTaskParameterEventArgs(
                 fields.BuildEventContext,
                 kind,
+                parameterName,
+                propertyName,
                 itemType,
                 items,
                 logItemMetadata: true,

@@ -10,9 +10,10 @@ namespace StructuredLogViewer
     {
         public static Folder BuildResultTree(
             object resultsObject,
-            bool moreAvailable = false,
             TimeSpan elapsed = default,
-            TimeSpan precalculationDuration = default)
+            TimeSpan precalculationDuration = default,
+            bool addDuration = true,
+            Func<BaseNode> addWhenNoResults = null)
         {
             var root = new Folder();
 
@@ -35,14 +36,18 @@ namespace StructuredLogViewer
                 status += $" (precalculation: {precalculationString})";
             }
 
-            root.Children.Add(new Note
+            if (addDuration)
             {
-                Text = status
-            });
+                root.Children.Add(new Note
+                {
+                    Text = status
+                });
+            }
 
             bool includeDuration = false;
             bool includeStart = false;
             bool includeEnd = false;
+            bool nest = !includeDuration && !includeStart && !includeEnd;
 
             foreach (var r in results)
             {
@@ -86,18 +91,32 @@ namespace StructuredLogViewer
                 results = results.OrderBy(r => r.EndTime).ToArray();
             }
 
+            var nodeToProxyMap = new Dictionary<BaseNode, BaseNode>();
+
+            foreach (var result in results)
+            {
+                var resultNode = result.Node;
+                if (resultNode != null && resultNode.Parent != null)
+                {
+                    var proxy = new ProxyNode();
+                    proxy.Original = resultNode;
+                    proxy.SearchResult = result;
+                    proxy.Text = ProxyNode.GetNodeText(resultNode);
+                    nodeToProxyMap[resultNode] = proxy;
+                }
+            }
+
             foreach (var result in results)
             {
                 TreeNode parent = root;
                 var resultNode = result.Node;
-
-                bool nest = !includeDuration && !includeStart && !includeEnd;
 
                 if (nest && resultNode != null && resultNode is not Project && resultNode.Parent != null)
                 {
                     if (result.RootFolder is string rootFolderName)
                     {
                         parent = InsertParent(
+                            map: null,
                             parent,
                             actualParent: null,
                             name: rootFolderName);
@@ -106,15 +125,15 @@ namespace StructuredLogViewer
                     var project = resultNode.GetNearestParent<Project>();
                     if (project != null)
                     {
-                        parent = InsertParent(parent, project);
+                        parent = InsertParent(nodeToProxyMap, parent, project);
                     }
                     else
                     {
                         var evaluation = resultNode.GetNearestParent<ProjectEvaluation>();
                         if (evaluation != null)
                         {
-                            parent = InsertParent(parent, evaluation.Parent as TimedNode);
-                            parent = InsertParent(parent, evaluation);
+                            parent = InsertParent(nodeToProxyMap, parent, evaluation.Parent as TimedNode);
+                            parent = InsertParent(nodeToProxyMap, parent, evaluation);
                         }
                     }
 
@@ -123,21 +142,21 @@ namespace StructuredLogViewer
                     var target = resultNode.GetNearestParent<Target>();
                     if (!isTarget && project != null && target != null && target.Project == project)
                     {
-                        parent = InsertParent(parent, target);
+                        parent = InsertParent(nodeToProxyMap, parent, target);
                     }
 
                     // nest under a Task, unless it's an MSBuild task higher up the parent chain
-                    var task = resultNode.GetNearestParent<Task>(t => !string.Equals(t.Name, "MSBuild", StringComparison.OrdinalIgnoreCase));
+                    var task = resultNode.GetNearestParent<Task>(t => t is not MSBuildTask);
                     if (task != null && !isTarget && project != null && task.GetNearestParent<Project>() == project)
                     {
-                        parent = InsertParent(parent, task);
+                        parent = InsertParent(nodeToProxyMap, parent, task);
                     }
 
                     if (resultNode is Item item &&
                         item.Parent is NamedNode itemParent &&
                         (itemParent is Folder || itemParent is AddItem || itemParent is RemoveItem))
                     {
-                        parent = InsertParent(parent, itemParent);
+                        parent = InsertParent(nodeToProxyMap, parent, itemParent);
                     }
 
                     if (resultNode is Metadata metadata &&
@@ -145,33 +164,42 @@ namespace StructuredLogViewer
                         parentItem.Parent is NamedNode grandparent &&
                         (grandparent is Folder || grandparent is AddItem || grandparent is RemoveItem))
                     {
-                        parent = InsertParent(parent, grandparent);
-                        parent = InsertParent(parent, parentItem);
+                        parent = InsertParent(nodeToProxyMap, parent, grandparent);
+                        parent = InsertParent(nodeToProxyMap, parent, parentItem);
                     }
                 }
 
                 if (resultNode == null || resultNode.Parent != null)
                 {
-                    var proxy = new ProxyNode();
-                    proxy.Original = resultNode;
-                    proxy.SearchResult = result;
-                    proxy.Text = resultNode?.Title;
+                    if (nodeToProxyMap.TryGetValue(resultNode, out var existing))
+                    {
+                        resultNode = existing;
+                    }
+                    else
+                    {
+                        var proxy = new ProxyNode();
+                        proxy.Original = resultNode;
+                        proxy.SearchResult = result;
+                        proxy.Text = ProxyNode.GetNodeText(resultNode);
 
-                    resultNode = proxy;
+                        resultNode = proxy;
+                    }
                 }
 
                 parent.Children.Add(resultNode);
             }
 
-            if (!root.HasChildren)
+            if (!root.HasChildren && addWhenNoResults != null)
             {
-                root.Children.Add(new Message { Text = "No results found." });
+                var node = addWhenNoResults();
+                root.Children.Add(node);
             }
 
             return root;
         }
 
         private static TreeNode InsertParent(
+            Dictionary<BaseNode, BaseNode> map,
             TreeNode parent,
             NamedNode actualParent,
             string name = null,
@@ -199,22 +227,24 @@ namespace StructuredLogViewer
                 }
             }
 
+            if (map != null)
+            {
+                if (map.TryGetValue(actualParent, out var result) && result is ProxyNode found)
+                {
+                    folderProxy = found;
+                }
+            }
+
             if (folderProxy == null)
             {
                 folderProxy = parent.GetOrCreateNodeWithText<ProxyNode>(name);
+                if (map != null)
+                {
+                    map[actualParent] = folderProxy;
+                }
             }
 
             folderProxy.Original = actualParent;
-
-            if (folderProxy.Highlights.Count == 0)
-            {
-                if (actualParent is Target or Task or AddItem or RemoveItem)
-                {
-                    folderProxy.Highlights.Add(folderProxy.OriginalType + " ");
-                }
-
-                folderProxy.Highlights.Add(name);
-            }
 
             folderProxy.IsExpanded = true;
             return folderProxy;

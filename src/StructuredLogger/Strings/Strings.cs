@@ -7,6 +7,8 @@ namespace Microsoft.Build.Logging.StructuredLogger
 {
     public class Strings
     {
+        private static readonly object locker = new object();
+
         public static StringsSet ResourceSet { get; private set; }
 
         public static void Initialize(string culture = "en-US")
@@ -16,10 +18,13 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 culture = "en-US";
             }
 
-            if (ResourceSet == null || ResourceSet.Culture != culture)
+            lock (locker)
             {
-                ResourceSet = new StringsSet(culture);
-                InitializeRegex();
+                if (ResourceSet == null || ResourceSet.Culture != culture)
+                {
+                    ResourceSet = new StringsSet(culture);
+                    InitializeRegex();
+                }
             }
         }
 
@@ -68,11 +73,11 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
             TargetSkippedFalseCondition = GetString("TargetSkippedFalseCondition");
 
-            TargetSkippedFalseConditionRegex = CreateRegex(TargetSkippedFalseCondition, 3);
+            TargetSkippedFalseConditionRegex = CreateRegex(TargetSkippedFalseCondition, 3, capture: true);
 
             TaskSkippedFalseCondition = GetString("TaskSkippedFalseCondition");
 
-            TaskSkippedFalseConditionRegex = CreateRegex(TaskSkippedFalseCondition, 3);
+            TaskSkippedFalseConditionRegex = CreateRegex(TaskSkippedFalseCondition, 3, capture: true);
 
             TargetDoesNotExistBeforeTargetMessage = CreateRegex(GetString("TargetDoesNotExistBeforeTargetMessage"), 2);
 
@@ -96,6 +101,10 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 .Replace(@"\{1}", @"(?<To>[^\""]+)"), RegexOptions.Compiled);
 
             RobocopyFileSkippedRegex = new Regex(Escape(RobocopyFileSkippedMessage)
+                .Replace(@"\{0}", @"(?<From>[^\""]+)")
+                .Replace(@"\{1}", @"(?<To>[^\""]+)"), RegexOptions.Compiled);
+
+            RobocopyFileSkippedAsDuplicateRegex = new Regex(Escape(RobocopyFileSkippedAsDuplicateMessage)
                 .Replace(@"\{0}", @"(?<From>[^\""]+)")
                 .Replace(@"\{1}", @"(?<To>[^\""]+)"), RegexOptions.Compiled);
 
@@ -340,14 +349,29 @@ namespace Microsoft.Build.Logging.StructuredLogger
             return "^" + text + "$";
         }
 
-        public static Regex CreateRegex(string text, int replacePlaceholders = 0, RegexOptions options = RegexOptions.Compiled)
+        public static Regex CreateRegex(string text, int replacePlaceholders = 0, RegexOptions options = RegexOptions.Compiled | RegexOptions.Singleline, bool capture = false)
         {
-            text = Regex.Escape(text);
+            if (capture)
+            {
+                text = "^" + Regex.Escape(text) + "$";
+            }
+            else
+            {
+                text = Regex.Escape(text);
+            }
+
             if (replacePlaceholders > 0)
             {
                 for (int i = 0; i < replacePlaceholders; i++)
                 {
-                    text = text.Replace(@$"\{{{i}}}", ".*?");
+                    if (capture)
+                    {
+                        text = text.Replace(@$"\{{{i}}}", $"(?<group{i}>.*?)");
+                    }
+                    else
+                    {
+                        text = text.Replace(@$"\{{{i}}}", $".*?");
+                    }
                 }
             }
 
@@ -397,6 +421,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
         public static Regex DidNotCopyRegex { get; set; }
         public static Regex RobocopyFileCopiedRegex { get; set; }
         public static Regex RobocopyFileSkippedRegex { get; set; }
+        public static Regex RobocopyFileSkippedAsDuplicateRegex { get; set; }
         public static Regex RobocopyFileFailedRegex { get; set; }
         public static Regex TargetDoesNotExistBeforeTargetMessage { get; set; }
         public static Regex TargetAlreadyCompleteSuccessRegex { get; set; }
@@ -643,6 +668,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
         // These aren't localized, see https://github.com/microsoft/MSBuildSdks/blob/543e965191417dee65471ee57a6702289847b49b/src/Artifacts/Tasks/Robocopy.cs#L66-L77
         private const string RobocopyFileCopiedMessage = "Copied {0} to {1}";
         private const string RobocopyFileSkippedMessage = "Skipped copying {0} to {1}";
+        private const string RobocopyFileSkippedAsDuplicateMessage = "Skipped {0} to {1} as duplicate copy";
         private const string RobocopyFileFailedMessage = "Failed to copy {0} to {1}";
 
         public static string GetPropertyName(string message)
