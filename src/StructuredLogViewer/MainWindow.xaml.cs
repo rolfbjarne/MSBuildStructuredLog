@@ -33,6 +33,8 @@ namespace StructuredLogViewer
 
         public MainWindow()
         {
+            AppDomain.CurrentDomain.FirstChanceException += CurrentDomain_FirstChanceException;
+
             InitializeComponent();
 
             var uri = new Uri("StructuredLogViewer;component/themes/Generic.xaml", UriKind.Relative);
@@ -46,6 +48,67 @@ namespace StructuredLogViewer
 
             ThemeManager.UseDarkTheme = SettingsService.UseDarkTheme;
             ThemeManager.UpdateTheme();
+        }
+
+        private bool exceptionReentrancyGuard;
+
+        private void CurrentDomain_FirstChanceException(object sender, System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs e)
+        {
+            if (exceptionReentrancyGuard)
+            {
+                return;
+            }
+
+            try
+            {
+                exceptionReentrancyGuard = true;
+                var exception = e.Exception;
+                if (exception == null)
+                {
+                    return;
+                }
+
+                exception = ExceptionHandler.Unwrap(exception);
+
+                if (ShouldIgnore(exception))
+                {
+                    return;
+                }
+
+                string message = exception.Message;
+                ExceptionText = message;
+                ErrorReporting.ReportException(exception);
+            }
+            catch
+            {
+            }
+            finally
+            {
+                exceptionReentrancyGuard = false;
+            }
+        }
+
+        private bool ShouldIgnore(Exception exception)
+        {
+            var toString = exception.ToString();
+
+            if (exception is NullReferenceException)
+            {
+                // known first-chance exception in Squirrel
+                if (toString.Contains("at Squirrel.UpdateManager.ApplyReleasesImpl.<unshimOurselves>b__13_0(RegistryView view)"))
+                {
+                    return true;
+                }
+            }
+            else if (exception is FileNotFoundException)
+            {
+                if (toString.Contains(".betaId"))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void MainWindow_SourceInitialized(object sender, EventArgs e)
@@ -120,6 +183,11 @@ namespace StructuredLogViewer
 
             text = text.TrimStart('"').TrimEnd('"');
 
+            if (!text.EndsWith(".binlog", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
             // only open a file from clipboard if it's not listed in the recent files
             var recentFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             recentFiles.UnionWith(SettingsService.GetRecentLogFiles());
@@ -135,16 +203,23 @@ namespace StructuredLogViewer
 
         private string GetSingleFileFromClipboard()
         {
-            if (Clipboard.ContainsFileDropList())
+            try
             {
-                var fileDropList = Clipboard.GetFileDropList();
-                if (fileDropList.Count == 1)
+                if (Clipboard.ContainsFileDropList())
                 {
-                    return fileDropList[0];
+                    var fileDropList = Clipboard.GetFileDropList();
+                    if (fileDropList.Count == 1)
+                    {
+                        return fileDropList[0];
+                    }
                 }
-            }
 
-            return Clipboard.GetText();
+                return Clipboard.GetText();
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private void DisplayWelcomeScreen(string message = "")
@@ -292,6 +367,11 @@ namespace StructuredLogViewer
         public bool OpenFile(string filePath)
         {
             if (filePath.IndexOfAny(Path.GetInvalidPathChars()) != -1)
+            {
+                return false;
+            }
+
+            if (PathUtils.HasInvalidVolumeSeparator(filePath))
             {
                 return false;
             }
@@ -572,6 +652,7 @@ namespace StructuredLogViewer
                 }
 
                 currentBuild.UpdateBreadcrumb(text);
+                currentBuild.Build.AddChild(new Message { Text = text });
             }
         }
 
@@ -1029,6 +1110,60 @@ Use project(.) or project(.csproj) to search all projects (slow)." };
         private void StartPage_Click(object sender, RoutedEventArgs e)
         {
             DisplayWelcomeScreen();
+        }
+
+        private void CloseException_Click(object sender, RoutedEventArgs e)
+        {
+            ExceptionText = null;
+        }
+
+        private void ExceptionText_MouseDown(object sender, MouseButtonEventArgs e)
+        {
+            Process.Start(ErrorReporting.LogFilePath);
+        }
+
+        private string currentExceptionText;
+        public string ExceptionText
+        {
+            get => currentExceptionText;
+            set
+            {
+                if (currentExceptionText == value)
+                {
+                    return;
+                }
+
+                currentExceptionText = value;
+                UIInvoke(() => UpdateExceptionVisibility());
+            }
+        }
+
+        private void UIInvoke(Action action)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    action();
+                });
+            }
+            else
+            {
+                action();
+            }
+        }
+
+        private void UpdateExceptionVisibility()
+        {
+            if (!string.IsNullOrEmpty(currentExceptionText))
+            {
+                exceptionText.Text = currentExceptionText;
+                exceptionPanel.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                exceptionPanel.Visibility = Visibility.Hidden;
+            }
         }
     }
 }

@@ -6,7 +6,7 @@ using StructuredLogViewer;
 
 namespace Microsoft.Build.Logging.StructuredLogger
 {
-    public class ProxyNode : TextNode
+    public class ProxyNode : TextNode, IHasRelevance
     {
         private BaseNode original;
         public BaseNode Original
@@ -118,6 +118,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 typePrefix != Strings.Item &&
                 typePrefix != Strings.Metadata &&
                 typePrefix != Strings.Property &&
+                typePrefix != "Project" &&
                 typePrefix != "Package")
             {
                 highlights.Add(typePrefix);
@@ -164,7 +165,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 }
             }
 
-            IEnumerable<(string Key, IEnumerable<string> Occurrences)> fieldsWithMatches = null;
+            (string Key, IEnumerable<string> Occurrences)[] fieldsWithMatches = null;
             if (result.FieldsToDisplay != null)
             {
                 fieldsWithMatches = result.FieldsToDisplay.Select(f =>
@@ -344,6 +345,12 @@ namespace Microsoft.Build.Logging.StructuredLogger
         }
 
         public override string TypeName => nameof(ProxyNode);
+
+        public bool IsLowRelevance
+        {
+            get => HasFlag(NodeFlags.LowRelevance) && !IsSelected;
+            set => SetFlag(NodeFlags.LowRelevance, value);
+        }
 
         public override string ToString()
         {

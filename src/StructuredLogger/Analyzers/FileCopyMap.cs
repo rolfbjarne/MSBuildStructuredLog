@@ -256,7 +256,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 var task = target.FindChild<MSBuildTask>();
                 if (task != null)
                 {
-                    var outputItems = task.FindLastChild<Folder>(f => f.Name == "OutputItems");
+                    var outputItems = task.FindLastChild<Folder>(static f => f.Name == "OutputItems");
                     if (outputItems != null)
                     {
                         var addItem = outputItems.FindChild<AddItem>();
@@ -265,13 +265,13 @@ namespace Microsoft.Build.Logging.StructuredLogger
                             var item = addItem.FindChild<Item>(filePath);
                             if (item != null)
                             {
-                                var metadata = item.FindChild<Metadata>(m => m.Name == "MSBuildSourceProjectFile");
+                                var metadata = item.FindChild<Metadata>(static m => m.Name == "MSBuildSourceProjectFile");
                                 if (metadata != null)
                                 {
                                     var metadataValue = metadata.Value;
                                     resultSet.Add(new SearchResult(metadata));
 
-                                    var referencedProject = task.FindChild<Project>(p => p.Name == Path.GetFileName(metadataValue));
+                                    var referencedProject = task.FindChild<Project, string>(static (p, metadataValue) => p.Name.Equals(Path.GetFileName(metadataValue), StringComparison.OrdinalIgnoreCase), metadataValue);
                                     if (referencedProject != null)
                                     {
                                         var getCopyToOutputDirectoryItems = referencedProject.FindTarget("GetCopyToOutputDirectoryItems");
@@ -286,6 +286,33 @@ namespace Microsoft.Build.Logging.StructuredLogger
                                             TryExplainSingleFileCopy(referencedProject, filePath, resultSet);
                                         }
                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            target = project.FindTarget("ResolveAssemblyReferences");
+            if (target != null)
+            {
+                var task = target.FindChild<ResolveAssemblyReferenceTask>();
+                if (task != null)
+                {
+                    var outputItems = task.FindLastChild<Folder>(static f => f.Name == "OutputItems");
+                    if (outputItems != null)
+                    {
+                        var addItem = outputItems.FindChild<AddItem>(static a => a.Name == "ReferenceCopyLocalPaths");
+                        if (addItem != null)
+                        {
+                            var item = addItem.FindChild<Item>(filePath);
+                            if (item != null)
+                            {
+                                var metadata = item.FindChild<Metadata>(static m => m.Name == "MSBuildSourceProjectFile");
+                                if (metadata != null)
+                                {
+                                    var metadataValue = metadata.Value;
+                                    resultSet.Add(new SearchResult(metadata));
                                 }
                             }
                         }
@@ -320,11 +347,21 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
         private void TryExplainSingleFileCopy(FileData fileData, IList<SearchResult> resultSet)
         {
-            var fileCopyInfo = fileData.Incoming.FirstOrDefault() ?? fileData.Outgoing.FirstOrDefault();
+            var singleResult = resultSet.FirstOrDefault();
+
+            var fileCopyInfo =
+                singleResult.AssociatedFileCopy ??
+                fileData.Incoming.FirstOrDefault() ??
+                fileData.Outgoing.FirstOrDefault();
+
             var project = fileCopyInfo.Project;
 
             var sourceFilePath = fileData.FilePath;
-            if (fileData.Incoming.Count == 1)
+            if (fileData.Incoming.Count > 0 &&
+                fileData.Incoming
+                    .Select(i => i.FileCopyOperation.Source)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count() == 1)
             {
                 sourceFilePath = fileCopyInfo.FileCopyOperation.Source;
             }
@@ -369,7 +406,23 @@ namespace Microsoft.Build.Logging.StructuredLogger
                                 continue;
                             }
 
-                            var item = new Item { Name = file.FilePath };
+                            string kind = null;
+                            bool hasIncoming = file.Incoming.Any();
+                            bool hasOutgoing = file.Outgoing.Any();
+                            if (hasIncoming && hasOutgoing)
+                            {
+                                kind = "SourceAndDestination";
+                            }
+                            else if (hasIncoming)
+                            {
+                                kind = "Destination";
+                            }
+                            else if (hasOutgoing)
+                            {
+                                kind = "Source";
+                            }
+
+                            var item = new FileCopy { Name = file.FilePath, Kind = kind };
                             var result = new SearchResult(item);
                             if (text != null)
                             {
@@ -453,6 +506,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
                 var message = incoming.FileCopyOperation.Message;
                 var result = new SearchResult(message);
+                result.AssociatedFileCopy = incoming;
                 result.AddMatch(message.Text, matchText);
                 result.RootFolder = "Incoming";
                 resultSet.Add(result);
@@ -471,6 +525,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
                 var message = outgoing.FileCopyOperation.Message;
                 var result = new SearchResult(message);
+                result.AssociatedFileCopy = outgoing;
                 result.AddMatch(message.Text, matchText);
                 result.RootFolder = "Outgoing";
                 resultSet.Add(result);

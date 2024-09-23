@@ -46,6 +46,8 @@ namespace StructuredLogViewer.Controls
         private MenuItem searchThisNode;
         private MenuItem excludeSubtreeFromSearchItem;
         private MenuItem excludeNodeByNameFromSearch;
+        private MenuItem searchInclusiveWithinThisTimespan;  // Search with Start OR End time overlaps this duration.
+        private MenuItem searchExclusiveWithinThisTimespan;  // Search with Start AND End time overlaps this duration.
         private MenuItem goToTimeLineItem;
         private MenuItem goToTracingItem;
         private MenuItem copyChildrenItem;
@@ -205,6 +207,8 @@ namespace StructuredLogViewer.Controls
             searchInSubtreeItem = new MenuItem() { Header = "Search in subtree" };
             excludeSubtreeFromSearchItem = new MenuItem() { Header = "Exclude subtree from search" };
             excludeNodeByNameFromSearch = new MenuItem() { Header = "Exclude node from search" };
+            searchInclusiveWithinThisTimespan = new MenuItem() { Header = "Search overlapping this duration" };
+            searchExclusiveWithinThisTimespan = new MenuItem() { Header = "Search within this duration" };
             searchInNodeByNameItem = new MenuItem() { Header = "Search in this node." };
             searchThisNode = new MenuItem() { Header = "Search This Node" };
             goToTimeLineItem = new MenuItem() { Header = "Timeline" };
@@ -241,6 +245,8 @@ namespace StructuredLogViewer.Controls
             searchInSubtreeItem.Click += (s, a) => SearchInSubtree();
             excludeSubtreeFromSearchItem.Click += (s, a) => ExcludeSubtreeFromSearch();
             excludeNodeByNameFromSearch.Click += (s, a) => ExcludeNodeByNameFromSearch();
+            searchInclusiveWithinThisTimespan.Click += (s, a) => SearchInclusiveWithinThisTimespan();
+            searchExclusiveWithinThisTimespan.Click += (s, a) => SearchExclusiveWithinThisTimespan();
             searchInNodeByNameItem.Click += (s, a) => SearchInNodeByName();
             searchThisNode.Click += (s, a) => SearchThisNode();
             goToTimeLineItem.Click += (s, a) => GoToTimeLine();
@@ -281,6 +287,8 @@ namespace StructuredLogViewer.Controls
             searchMenuGroup.AddItem(searchThisNode);
             searchMenuGroup.AddItem(excludeSubtreeFromSearchItem);
             searchMenuGroup.AddItem(excludeNodeByNameFromSearch);
+            searchMenuGroup.AddItem(searchInclusiveWithinThisTimespan);
+            searchMenuGroup.AddItem(searchExclusiveWithinThisTimespan);
 
             contextMenu.AddItem(gotoMenuGroup);
             gotoMenuGroup.AddItem(goToTimeLineItem);
@@ -695,17 +703,26 @@ Search for multiple words separated by space (space means AND). Enclose multiple
 
 Use syntax like '$property Prop' to narrow results down by item kind. Supported kinds: ";
 
-            string watermarkText2 = @"Use the under(FILTER) clause to only include results where any of the nodes in the parent chain matches the FILTER. Use project(...) to filter by parent project. Examples:
+            string watermarkText2 = @" • Use under(FILTER) clause to only include results where any of the nodes in the parent chain matches the FILTER.
+ • Use notunder(...) as the opposite of under(...).
+ • Use project(...) to filter by parent project.
+ • Use not(...) to exclude subqueries.
+
+Examples:
  • $csc under($project Core)
- • Copying file project(ProjectA)
+ • Copying file project(ProjectA.csproj)
+
+Use '$target skipped=false' to exclude skipped targets (use true to only include skipped).
 
 Append [[$time]], [[$start]] and/or [[$end]] to show times and/or durations and sort the results by start time or duration descending (for tasks, targets and projects).
 
-Use start<""2023-11-23 14:30:54.579"", start>, end< or end> to filter events that start or end before or after a given timestamp. Timestamp needs to be in quotes.
+Use start<""2023-11-23 14:30:54.579"", start>, end<, or end> to filter events that start or end before or after a given timestamp. Timestamp needs to be in quotes.
 
 Use '$copy path' where path is a file or directory to find file copy operations involving the file or directory. `$copy substring` will search for copied files containing the substring.
 
 Use '$nuget project(MyProject.csproj) Package.Name' to search for NuGet packages (by name or version), dependencies (direct and transitive) and files coming from NuGet packages.
+
+Use '$projectreference project(MyProject.csproj) RefProj' to search for projects referenced by MyProject.csproj directly or indirectly. For a single matching project all referencing projects will be shown as well.
 
 Examples:
 ";
@@ -941,6 +958,8 @@ Recent (");
                 goToTimeLineItem.Visibility = Visibility.Visible;
                 goToTracingItem.Visibility = Visibility.Visible;
                 excludeNodeByNameFromSearch.Visibility = hasChildren ? Visibility.Visible : Visibility.Collapsed;
+                searchInclusiveWithinThisTimespan.Visibility = Visibility.Visible;
+                searchExclusiveWithinThisTimespan.Visibility = Visibility.Visible;
                 searchInNodeByNameItem.Visibility = hasChildren ? Visibility.Visible : Visibility.Collapsed;
 
                 if (excludeNodeByNameFromSearch.Visibility == Visibility.Visible)
@@ -962,6 +981,8 @@ Recent (");
                 goToTimeLineItem.Visibility = Visibility.Collapsed;
                 goToTracingItem.Visibility = Visibility.Collapsed;
                 excludeNodeByNameFromSearch.Visibility = Visibility.Collapsed;
+                searchInclusiveWithinThisTimespan.Visibility = Visibility.Collapsed;
+                searchExclusiveWithinThisTimespan.Visibility = Visibility.Collapsed;
                 searchInNodeByNameItem.Visibility = Visibility.Collapsed;
                 if (!hasChildren)
                 {
@@ -1413,8 +1434,17 @@ Recent (");
             return projectContext as IProjectOrEvaluation;
         }
 
+        private object currentBreadcrumb;
+
         public void UpdateBreadcrumb(object item)
         {
+            if (currentBreadcrumb == item)
+            {
+                return;
+            }
+
+            currentBreadcrumb = item;
+
             var node = item as BaseNode;
             IEnumerable<object> chain = node?.GetParentChainIncludingThis();
             if (chain == null || !chain.Any())
@@ -1985,9 +2015,31 @@ Recent (");
 
         public void ExcludeNodeByNameFromSearch()
         {
-            if (treeView.SelectedItem is TimedNode treeNode)
+            if (treeView.SelectedItem is NamedNode treeNode)
             {
                 searchLogControl.SearchText += $" notunder(${treeNode.TypeName} {treeNode.Name})";
+                SelectSearchTab();
+            }
+        }
+
+        public void SearchInclusiveWithinThisTimespan()
+        {
+            if (treeView.SelectedItem is TimedNode timedNode)
+            {
+                DateTime starTime = timedNode.StartTime;
+                DateTime endTime = timedNode.EndTime; // add half second to round up
+                searchLogControl.SearchText += $" start<\"{TextUtilities.Display(endTime, displayDate: true, fullPrecision: true)}\" end>\"{TextUtilities.Display(starTime, displayDate: true, fullPrecision: true)}\" ";
+                SelectSearchTab();
+            }
+        }
+
+        public void SearchExclusiveWithinThisTimespan()
+        {
+            if (treeView.SelectedItem is TimedNode timedNode)
+            {
+                DateTime starTime = timedNode.StartTime;
+                DateTime endTime = timedNode.EndTime;
+                searchLogControl.SearchText += $" start>\"{TextUtilities.Display(starTime, displayDate: true, fullPrecision: true)}\" end<\"{TextUtilities.Display(endTime, displayDate: true, fullPrecision: true)}\"";
                 SelectSearchTab();
             }
         }
@@ -2318,6 +2370,13 @@ Recent (");
                         searchLogControl.ResultsList.ItemsSource is IEnumerable<BaseNode> results &&
                         results.Contains(item):
                         return SearchForFullPath(item.Text);
+                    case Project project when
+                        searchLogControl.SearchText.Contains("$projectreference"):
+                        return SearchForProject(Path.GetFileName(project.ProjectFile));
+                    case ProxyNode proxy when
+                        searchLogControl.SearchText.Contains("$projectreference") &&
+                        proxy.Original is Project originalProject:
+                        return SearchForProject(Path.GetFileName(originalProject.ProjectFile));
                     case IHasSourceFile hasSourceFile when hasSourceFile.SourceFilePath != null:
                         int line = 0;
                         var hasLine = hasSourceFile as IHasLineNumber;
@@ -2335,6 +2394,26 @@ Recent (");
                             if (evaluation == null && node is Project project)
                             {
                                 evaluation = Build.FindEvaluation(project.EvaluationId);
+                            }
+                        }
+
+                        // if a preprocessed text is selected and we can find the requested file in the preprocessed text,
+                        // navigate to that instead of opening in a separate file
+                        if (hasSourceFile is Import import)
+                        {
+                            string sourceFilePath = import.ImportedProjectFilePath;
+
+                            if (documentWell.tabControl.SelectedItem is TabItem current &&
+                                current.Content is TextViewerControl currentTextViewer &&
+                                currentTextViewer.EditorExtension is { } extension)
+                            {
+                                int offset = extension.PreprocessContext.FindFileOffset(sourceFilePath);
+                                if (offset > 0)
+                                {
+                                    currentTextViewer.TextEditor.CaretOffset = offset;
+                                    currentTextViewer.TextEditor.ScrollToLine(currentTextViewer.TextEditor.TextArea.Caret.Line);
+                                    return true;
+                                }
                             }
                         }
 
@@ -2375,6 +2454,13 @@ Recent (");
             return false;
         }
 
+        private bool SearchForProject(string name)
+        {
+            var text = $"$projectreference project({name})";
+            searchLogControl.SearchText = text;
+            return true;
+        }
+
         private bool DisplayEmbeddedFile(Item item)
         {
             string path = item.Text;
@@ -2404,7 +2490,36 @@ Recent (");
                 preprocess = preprocessedFileManager.GetPreprocessAction(preprocessableFilePath, PreprocessedFileManager.GetEvaluationKey(evaluation));
             }
 
-            documentWell.DisplaySource(preprocessableFilePath, text.Text, lineNumber, column, preprocess, navigationHelper);
+            EditorExtension editorExtension = null;
+            var context = preprocessedFileManager.TryGetContext(sourceFilePath);
+            if (context != null)
+            {
+                editorExtension = new EditorExtension();
+                editorExtension.PreprocessContext = context;
+
+                evaluation ??= context.Evaluation;
+
+                editorExtension.ImportSelected += import =>
+                {
+                    if (import != null)
+                    {
+                        UpdateBreadcrumb(import);
+                    }
+                    else if (evaluation != null)
+                    {
+                        UpdateBreadcrumb(evaluation);
+                    }
+                };
+            }
+
+            documentWell.DisplaySource(
+                preprocessableFilePath,
+                text.Text,
+                lineNumber,
+                column,
+                preprocess,
+                navigationHelper,
+                editorExtension);
             return true;
         }
 
@@ -2550,7 +2665,7 @@ Recent (");
                 return;
             }
 
-            var statsRoot = Build.FindChild<Folder>(f => f.Name.StartsWith(Strings.Statistics));
+            var statsRoot = Build.FindChild<Folder>(static f => f.Name.StartsWith(Strings.Statistics));
             if (statsRoot != null)
             {
                 return;
@@ -2663,9 +2778,9 @@ Recent (");
 
         private void DisplayTreeStats(Folder statsRoot, BuildStatistics treeStats, BinlogStats recordStats)
         {
-            var buildMessageNode = statsRoot.FindChild<Folder>(n => n.Name.StartsWith("BuildMessage", StringComparison.Ordinal));
-            var taskInputsNode = buildMessageNode.FindChild<Folder>(n => n.Name.StartsWith("Task Input", StringComparison.Ordinal));
-            var taskOutputsNode = buildMessageNode.FindChild<Folder>(n => n.Name.StartsWith("Task Output", StringComparison.Ordinal));
+            var buildMessageNode = statsRoot.FindChild<Folder>(static n => n.Name.StartsWith("BuildMessage", StringComparison.Ordinal));
+            var taskInputsNode = buildMessageNode.FindChild<Folder>(static n => n.Name.StartsWith("Task Input", StringComparison.Ordinal));
+            var taskOutputsNode = buildMessageNode.FindChild<Folder>(static n => n.Name.StartsWith("Task Output", StringComparison.Ordinal));
 
             AddTopTasks(treeStats.TaskParameterMessagesByTask, taskInputsNode);
             AddTopTasks(treeStats.OutputItemMessagesByTask, taskOutputsNode);
