@@ -15,11 +15,12 @@
             <ResourceDictionary.MergedDictionaries>
                 <ResourceInclude Source="/Resources.xaml" />
             </ResourceDictionary.MergedDictionaries>
+            <x:Double x:Key="ControlContentThemeFontSize">12</x:Double>
         </ResourceDictionary>
     </Application.Resources>
     
     <Application.Styles>
-        <FluentTheme />
+        <FluentTheme DensityStyle="Compact" />
         <StyleInclude Source="avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml" />
         <StyleInclude Source="/Styles.xaml" />
         
