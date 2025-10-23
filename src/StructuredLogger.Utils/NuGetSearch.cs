@@ -52,6 +52,8 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
         public Build Build { get; }
 
+        public bool AugmentOtherResults => false;
+
         public NuGetSearch(Build build)
         {
             Build = build;
@@ -63,7 +65,17 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
         private void FileCopyMap_FoundSingleFileCopy(FileData fileData, IList<SearchResult> resultCollector)
         {
-            var fileCopyInfo = fileData.Incoming.FirstOrDefault() ?? fileData.Outgoing.FirstOrDefault();
+            var singleResult = resultCollector.FirstOrDefault();
+            if (resultCollector.Count > 1)
+            {
+                singleResult = resultCollector.FirstOrDefault(r => r.RootFolder == "Incoming");
+            }
+
+            var fileCopyInfo =
+                singleResult?.AssociatedFileCopy ??
+                fileData.Incoming.FirstOrDefault() ??
+                fileData.Outgoing.FirstOrDefault();
+
             var project = fileCopyInfo.Project;
 
             var filePath = fileData.FilePath;
@@ -159,13 +171,24 @@ namespace Microsoft.Build.Logging.StructuredLogger
             }
         }
 
+        public IEnumerable<AssetsFile> AssetsFiles
+        {
+            get
+            {
+                if (assetsFiles == null)
+                {
+                    PopulateAssetsFiles();
+                }
+
+                return assetsFiles;
+            }
+        }
+
         public PackageReport ListAllPackages()
         {
             var list = new HashSet<PackageInfo>();
 
-            PopulateAssetsFiles();
-
-            foreach (var file in assetsFiles)
+            foreach (var file in AssetsFiles)
             {
                 foreach (var library in file.LockFile.Libraries)
                 {
@@ -604,7 +627,8 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 {
                     packageNode = new Package
                     {
-                        Name = item.Id, VersionSpec = item.VersionRange.ToString()
+                        Name = item.Id,
+                        VersionSpec = item.VersionRange.ToString()
                     };
                     TreeNode itemNode = packageNode;
 
@@ -840,15 +864,13 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
         private AssetsFile FindAssetsFile(string projectFilePath)
         {
-            PopulateAssetsFiles();
-
-            return assetsFiles.FirstOrDefault(f => f.ProjectFilePath.Equals(projectFilePath, StringComparison.OrdinalIgnoreCase));
+            return AssetsFiles.FirstOrDefault(f => f.ProjectFilePath.Equals(projectFilePath, StringComparison.OrdinalIgnoreCase));
         }
 
         private IReadOnlyList<AssetsFile> FindAssetsFiles(NodeQueryMatcher underProjectMatcher)
         {
             var files = new List<AssetsFile>();
-            foreach (var assetFile in assetsFiles)
+            foreach (var assetFile in AssetsFiles)
             {
                 foreach (var term in underProjectMatcher.Terms)
                 {
@@ -944,6 +966,81 @@ namespace Microsoft.Build.Logging.StructuredLogger
             {
                 return name;
             }
+        }
+
+        private IEnumerable<(string key, string value)> GetNuGetDependencies(AssetsFile assetsFile)
+        {
+            var result = new List<(string key, string value)>();
+
+            var lockFile = assetsFile.LockFile;
+            var libraryMap = assetsFile.LibraryMap;
+            var projectKey = Path.GetFileNameWithoutExtension(assetsFile.ProjectFilePath);
+
+            foreach (var framework in lockFile.ProjectFileDependencyGroups)
+            {
+                var frameworkDependencies = framework.Dependencies.Select(d => ParsePackageId(d)).ToArray();
+                foreach (var frameworkDependency in frameworkDependencies)
+                {
+                    result.Add((projectKey, frameworkDependency.name));
+                }
+
+                var target = lockFile.Targets.FirstOrDefault(t => string.Equals(t.Name, framework.FrameworkName, StringComparison.OrdinalIgnoreCase));
+                if (target == null)
+                {
+                    continue;
+                }
+
+                var libraries = target.Libraries.ToDictionary(l => l.Name, StringComparer.OrdinalIgnoreCase);
+
+                foreach (var library in libraries)
+                {
+                    var source = library.Key;
+
+                    var lockFileTargetLibrary = library.Value;
+                    foreach (var dependency in lockFileTargetLibrary.Dependencies)
+                    {
+                        var destination = dependency.Id;
+                        result.Add((source, destination));
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        public Digraph GetDigraph(string projectFile)
+        {
+            if (projectFile == null)
+            {
+                return GetDigraph();
+            }
+
+            var assetsFile = FindAssetsFile(projectFile);
+            if (assetsFile == null)
+            {
+                return GetDigraph();
+            }
+
+            var dependencies = GetNuGetDependencies(assetsFile);
+            return GetDigraph(dependencies);
+        }
+
+        public Digraph GetDigraph()
+        {
+            var dependencies = new HashSet<(string key, string value)>();
+
+            foreach (var assetsFile in AssetsFiles)
+            {
+                var fileDependencies = GetNuGetDependencies(assetsFile);
+                dependencies.UnionWith(fileDependencies);
+            }
+
+            return GetDigraph(dependencies);
+        }
+
+        public Digraph GetDigraph(IEnumerable<(string key, string value)> dependencies)
+        {
+            return Digraph.Create(dependencies);
         }
     }
 }

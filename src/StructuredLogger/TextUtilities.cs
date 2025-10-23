@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Microsoft.Build.Logging.StructuredLogger
 {
@@ -208,6 +209,16 @@ namespace Microsoft.Build.Logging.StructuredLogger
             return IndexOf(text, span, ch) != -1;
         }
 
+        public static bool ContainsIgnoreCase(this string text, string substring)
+        {
+            if (text == null || substring == null)
+            {
+                return false;
+            }
+
+            return text.IndexOf(substring, StringComparison.OrdinalIgnoreCase) != -1;
+        }
+
         public static int IndexOf(this string text, Span span, char ch)
         {
 #if NET
@@ -247,6 +258,22 @@ namespace Microsoft.Build.Logging.StructuredLogger
 #else
                 text.Replace("\r\n", "\n").Replace("\r", "\n");
 #endif
+
+            return text;
+        }
+
+        /// <summary>
+        /// Normalize MSBuild property value for user reading.
+        /// </summary>
+        /// <returns>Returns a string without new lines, tabs, or excessive spaces.</returns>
+        public static string NormalizePropertyValue(this string text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return text;
+            }
+
+            text = Regex.Replace(text, @"(\s+)", " ");
 
             return text;
         }
@@ -506,7 +533,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
             return span.Milliseconds + " ms";
         }
 
-        public static string Display(DateTime time, bool displayDate = false, bool fullPrecision = false)
+        public static string Display(this DateTime time, bool displayDate = false, bool fullPrecision = false)
         {
             string fullPrecisionString = fullPrecision ? "ffff" : "";
 
@@ -728,7 +755,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
             }
 
             int previous = 0;
-            for (int i = 0; i > -1 && i < text.Length; )
+            for (int i = 0; i > -1 && i < text.Length;)
             {
                 i = text.IndexOf(openParen, i);
                 if (i == -1)

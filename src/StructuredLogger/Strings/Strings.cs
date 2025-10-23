@@ -100,6 +100,10 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 .Replace(@"\{0}", @"(?<From>[^\""]+)")
                 .Replace(@"\{1}", @"(?<To>[^\""]+)"), RegexOptions.Compiled);
 
+            RobocopyCreatedCopyOnWriteLinkRegex = new Regex(Escape(RobocopyCreatedCopyOnWriteLinkMessage)
+                .Replace(@"\{0}", @"(?<From>[^\""]+)")
+                .Replace(@"\{1}", @"(?<To>[^\""]+)"), RegexOptions.Compiled);
+
             RobocopyFileSkippedRegex = new Regex(Escape(RobocopyFileSkippedMessage)
                 .Replace(@"\{0}", @"(?<From>[^\""]+)")
                 .Replace(@"\{1}", @"(?<To>[^\""]+)"), RegexOptions.Compiled);
@@ -143,6 +147,10 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
             string propertyReassignment = GetPropertyReassignmentText();
             PropertyReassignmentRegex = new Regex(propertyReassignment, RegexOptions.Compiled | RegexOptions.Singleline);
+
+            PropertyAssignment = GetString("PropertyAssignment");
+
+            UninitializedPropertyRead = GetString("UninitializedPropertyRead");
 
             // MSBuild 17.6 shipped with this hardcoded to English (the first part of the regex), but it was switched to a different
             // localized message in https://github.com/dotnet/msbuild/pull/8665. Support both here.
@@ -212,6 +220,9 @@ namespace Microsoft.Build.Logging.StructuredLogger
             RemovingPropertiesPrefix = GetString("General.UndefineProperties");
             EvaluationStarted = GetString("EvaluationStarted");
             EvaluationFinished = GetString("EvaluationFinished");
+
+            TotalAnalyzerExecutionTimeRegex = CreateRegex(GetString("AnalyzerTotalExecutionTime"), 1);
+            TotalGeneratorExecutionTimeRegex = CreateRegex(GetString("GeneratorTotalExecutionTime"), 1);
         }
 
         private static string GetEmptyConditionText()
@@ -316,32 +327,32 @@ namespace Microsoft.Build.Logging.StructuredLogger
             {
                 case "cs-CZ":
                     text = text
-                        .Replace(@"$({0})={1} (", @"\$\((?<Name>\w+)\)="".*"" \(")
-                        .Replace(@"{2})", @".*\)")
+                        .Replace(@"$({0})={1} (", @"\$\((?<Name>\w+)\)=""(?<NewValue>.*)"" \(")
+                        .Replace(@"{2})", @"(?<OldValue>.*)\)")
                         .Replace("{3}", @"(?<File>.*) \((?<Line>\d+),(?<Column>\d+)\)");
                     break;
                 case "ko-KR":
                     text = text
                         .Replace(@"$({0})={3}", @"\$\((?<Name>\w+)\)=(?<File>.*) \((?<Line>\d+),(?<Column>\d+)\)")
-                        .Replace("{1}", ".*")
-                        .Replace("{2}", ".*");
+                        .Replace("{1}", "(?<NewValue>.*)")
+                        .Replace("{2}", "(?<OldValue>.*)");
                     break;
                 case "pl-PL":
                     text = text
-                        .Replace(@"$({0})=„{1}” (", @"\$\((?<Name>\w+)\)=„.*” \(")
-                        .Replace(@"„{2}”)", @"„.*”\)")
+                        .Replace(@"$({0})=„{1}” (", @"\$\((?<Name>\w+)\)=„(?<NewValue>.*)” \(")
+                        .Replace(@"„{2}”)", @"„(?<OldValue>.*)”\)")
                         .Replace("{3}", @"(?<File>.*) \((?<Line>\d+),(?<Column>\d+)\)");
                     break;
                 case "zh-Hans":
                     text = text
-                        .Replace(@"$({0})=“{1}”(", @"\$\((?<Name>\w+)\)=“.*”\(")
-                        .Replace(@"{2}”)", @".*”\)")
+                        .Replace(@"$({0})=“{1}”(", @"\$\((?<Name>\w+)\)=“(?<NewValue>.*)”\(")
+                        .Replace(@"{2}”)", @"(?<OldValue>.*)”\)")
                         .Replace("{3}", @"(?<File>.*) \((?<Line>\d+),(?<Column>\d+)\)");
                     break;
                 default:
                     text = text
-                        .Replace(@"$({0})=""{1}"" (", @"\$\((?<Name>\w+)\)="".*"" \(")
-                        .Replace(@"{2}"")", @".*""\)")
+                        .Replace(@"$({0})=""{1}"" (", @"\$\((?<Name>\w+)\)=""(?<NewValue>.*)"" \(")
+                        .Replace(@"{2}"")", @"(?<OldValue>.*)""\)")
                         .Replace("{3}", @"(?<File>.*) \((?<Line>\d+),(?<Column>\d+)\)");
                     break;
             }
@@ -420,6 +431,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
         public static Regex CreatingHardLinkRegex { get; set; }
         public static Regex DidNotCopyRegex { get; set; }
         public static Regex RobocopyFileCopiedRegex { get; set; }
+        public static Regex RobocopyCreatedCopyOnWriteLinkRegex { get; set; }
         public static Regex RobocopyFileSkippedRegex { get; set; }
         public static Regex RobocopyFileSkippedAsDuplicateRegex { get; set; }
         public static Regex RobocopyFileFailedRegex { get; set; }
@@ -436,6 +448,9 @@ namespace Microsoft.Build.Logging.StructuredLogger
         public static Regex TaskFoundRegex { get; set; }
         public static Regex CouldNotResolveSdkRegex { get; set; }
 
+        public static Regex TotalAnalyzerExecutionTimeRegex { get; set; }
+        public static Regex TotalGeneratorExecutionTimeRegex { get; set; }
+
         public static string TargetSkippedFalseCondition { get; set; }
         public static string TargetAlreadyCompleteSuccess { get; set; }
         public static string TargetAlreadyCompleteFailure { get; set; }
@@ -443,7 +458,9 @@ namespace Microsoft.Build.Logging.StructuredLogger
         public static string ProjectImportSkippedFalseCondition { get; set; }
         public static string CouldNotResolveSdk { get; set; }
         public static string ProjectImportSkippedExpressionEvaluatedToEmpty { get; set; }
+        public static string PropertyAssignment { get; set; }
         public static string PropertyReassignment { get; set; }
+        public static string UninitializedPropertyRead { get; set; }
         public static string ProjectImportSkippedNoMatches { get; set; }
         public static string ProjectImportSkippedMissingFile { get; set; }
         public static string ProjectImportSkippedInvalidFile { get; set; }
@@ -599,9 +616,6 @@ namespace Microsoft.Build.Logging.StructuredLogger
         public static string To => "\" to \"";
         public static string ToFile => "\" to file \"";
 
-        public static string TotalAnalyzerExecutionTime => "Total analyzer execution time:";
-        public static string TotalGeneratorExecutionTime => "Total generator execution time:";
-
         /// <summary>
         /// https://github.com/NuGet/Home/issues/10383
         /// </summary>
@@ -668,6 +682,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
         // These aren't localized, see https://github.com/microsoft/MSBuildSdks/blob/543e965191417dee65471ee57a6702289847b49b/src/Artifacts/Tasks/Robocopy.cs#L66-L77
         private const string RobocopyFileCopiedMessage = "Copied {0} to {1}";
+        private const string RobocopyCreatedCopyOnWriteLinkMessage = "Created copy-on-write link {0} to {1}";
         private const string RobocopyFileSkippedMessage = "Skipped copying {0} to {1}";
         private const string RobocopyFileSkippedAsDuplicateMessage = "Skipped {0} to {1} as duplicate copy";
         private const string RobocopyFileFailedMessage = "Failed to copy {0} to {1}";

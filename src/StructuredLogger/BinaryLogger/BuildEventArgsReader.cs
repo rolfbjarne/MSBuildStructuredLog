@@ -210,6 +210,8 @@ namespace Microsoft.Build.Logging.StructuredLogger
             }
         }
 
+        internal BinaryLogRecordKind LastRecordKind;
+
         /// <summary>
         /// Reads the next log record from the <see cref="BinaryReader"/>.
         /// </summary>
@@ -224,6 +226,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
             while (result == null)
             {
                 BinaryLogRecordKind recordKind = PreprocessRecordsTillNextEvent(IsAuxiliaryRecord);
+                LastRecordKind = recordKind;
 
                 if (recordKind == BinaryLogRecordKind.EndOfFile)
                 {
@@ -338,6 +341,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 BinaryLogRecordKind.BuildCheckTracing => ReadBuildCheckTracingEventArgs(),
                 BinaryLogRecordKind.BuildCheckAcquisition => ReadBuildCheckAcquisitionEventArgs(),
                 BinaryLogRecordKind.BuildSubmissionStarted => ReadBuildSubmissionStartedEventArgs(),
+                BinaryLogRecordKind.BuildCanceled => ReadBuildCanceledEventArgs(),
                 _ => null,
                 
             };
@@ -707,6 +711,15 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 fields.Message,
                 fields.HelpKeyword,
                 succeeded,
+                fields.Timestamp);
+            SetCommonFields(e, fields);
+            return e;
+        }
+        private BuildEventArgs ReadBuildCanceledEventArgs()
+        {
+            var fields = ReadBuildEventArgsFields();
+            var e = new BuildCanceledEventArgs(
+                fields.Message,
                 fields.Timestamp);
             SetCommonFields(e, fields);
             return e;
@@ -1287,7 +1300,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
         private BuildEventArgs ReadBuildSubmissionStartedEventArgs()
         {
             var fields = ReadBuildEventArgsFields(readImportance: false);
-            var e = new BuildSubmissionStartedEvent();
+            var e = new BuildSubmissionStartedEventArgs();
 
             var globalProperties = ReadStringDictionary();
             var entries = ReadStringList();
@@ -1350,7 +1363,25 @@ namespace Microsoft.Build.Logging.StructuredLogger
             string message = fields.Message;
             if (_fileFormatVersion >= 13)
             {
-                message = GetPropertyReassignmentMessage(propertyName, newValue, previousValue, location);
+                if (_fileFormatVersion >= 25)
+                {
+                    var reassignmentMessage = GetPropertyReassignmentMessage(propertyName, newValue, previousValue, $"{fields.File} ({fields.LineNumber},{fields.ColumnNumber})");
+                    var reassignmentEvent = new PropertyReassignmentEventArgs(
+                        propertyName,
+                        previousValue,
+                        newValue,
+                        // the message contains the location
+                        reassignmentMessage,
+                        reassignmentMessage);
+
+                    SetCommonFields(reassignmentEvent, fields);
+
+                    return reassignmentEvent;
+                }
+                else
+                {
+                    message = GetPropertyReassignmentMessage(propertyName, newValue, previousValue, location);
+                }
             }
 
             var e = new PropertyReassignmentEventArgs(
@@ -1363,7 +1394,6 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 fields.SenderName,
                 fields.Importance);
             SetCommonFields(e, fields);
-
             return e;
         }
 
@@ -1371,10 +1401,16 @@ namespace Microsoft.Build.Logging.StructuredLogger
         {
             var fields = ReadBuildEventArgsFields(readImportance: true);
             string propertyName = ReadDeduplicatedString();
+            string? message = fields.Message ?? string.Empty;
+
+            if (_fileFormatVersion >= 25)
+            {
+                message = FormatResourceStringIgnoreCodeAndKeyword(Strings.UninitializedPropertyRead, propertyName);
+            }
 
             var e = new UninitializedPropertyReadEventArgs(
                 propertyName,
-                fields.Message,
+                message,
                 fields.HelpKeyword,
                 fields.SenderName,
                 fields.Importance);
@@ -1391,14 +1427,21 @@ namespace Microsoft.Build.Logging.StructuredLogger
             string propertyValue = ReadDeduplicatedString();
             string propertySource = ReadDeduplicatedString();
 
+            string message = fields.Message;
+            if (_fileFormatVersion >= 25)
+            {
+                string formattedSource = string.IsNullOrEmpty(fields.File)
+                    ? propertySource
+                    : $"{fields.File} ({fields.LineNumber},{fields.ColumnNumber})";
+
+                message = FormatResourceStringIgnoreCodeAndKeyword(Strings.PropertyAssignment, propertyName, propertyValue, formattedSource);
+            }
+
             var e = new PropertyInitialValueSetEventArgs(
                 propertyName,
                 propertyValue,
                 propertySource,
-                fields.Message,
-                fields.HelpKeyword,
-                fields.SenderName,
-                fields.Importance);
+                message);
             SetCommonFields(e, fields);
 
             return e;
@@ -2028,7 +2071,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 // the file.
                 // Win-win: small binlog playback is fast and large binlog playback
                 // doesn't OOM.
-                if (text.Length <= StringSizeThreshold && totalAllocatedShortStrings < 1_000_000_000)
+                if (stream == null || (text.Length <= StringSizeThreshold && totalAllocatedShortStrings < 1_000_000_000))
                 {
                     totalAllocatedShortStrings += text.Length;
                     return text;

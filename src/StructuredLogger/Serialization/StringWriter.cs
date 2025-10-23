@@ -6,18 +6,18 @@ namespace Microsoft.Build.Logging.StructuredLogger
     {
         public static int MaxStringLength = 100_000_000;
 
-        public static string GetString(BaseNode rootNode)
+        public static string GetString(BaseNode rootNode, bool visibleOnly = false)
         {
             var sb = new StringBuilder();
 
-            WriteNode(rootNode, sb, 0);
+            WriteNode(rootNode, sb, indent: 0, visibleOnly);
 
             return sb.ToString();
         }
 
-        private static void WriteNode(BaseNode rootNode, StringBuilder sb, int indent = 0)
+        private static void WriteNode(BaseNode node, StringBuilder sb, int indent, bool visibleOnly)
         {
-            if (rootNode == null)
+            if (node == null)
             {
                 return;
             }
@@ -28,30 +28,27 @@ namespace Microsoft.Build.Logging.StructuredLogger
             }
 
             Indent(sb, indent);
-            var text = rootNode.ToString() ?? "";
 
-            // when we ingest strings we normalize on \n to save space.
-            // when the strings leave our app via clipboard, bring \r\n back so that notepad works
-            text = text.Replace("\n", "\r\n");
+            var text = node.GetFullText();
 
             sb.AppendLine(text);
 
-            var treeNode = rootNode as TreeNode;
-            if (treeNode != null && treeNode.HasChildren)
+            if (node is TreeNode { HasChildren: true } treeNode)
             {
-                foreach (var child in treeNode.Children)
+                // Only recurse into children if we're not in visibleOnly mode, or if we are and the node is expanded
+                if (!visibleOnly || treeNode.IsExpanded)
                 {
-                    WriteNode(child, sb, indent + 1);
+                    foreach (var child in treeNode.Children)
+                    {
+                        WriteNode(child, sb, indent + 1, visibleOnly);
+                    }
                 }
             }
         }
 
         private static void Indent(StringBuilder sb, int indent)
         {
-            for (int i = 0; i < indent * 4; i++)
-            {
-                sb.Append(' ');
-            }
+            sb.Append(' ', indent * 4);
         }
     }
 }

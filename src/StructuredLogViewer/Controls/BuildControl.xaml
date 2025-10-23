@@ -111,13 +111,27 @@
                   </Grid>
                 </TabItem>
 
-                <TabItem x:Name="projectGraphTab" Header="Project Graph">
+                <TabItem x:Name="projectReferenceGraphTab" Header="Project References">
                   <Grid>
-                    <TextBlock x:Name="projectGraphWatermark" HorizontalAlignment="Center"
-                               VerticalAlignment="Center">Rendering graph...</TextBlock>
-                    <local:ProjectGraphControl x:Name="projectGraphControl" Visibility="Hidden"/>
+                    <TextBlock x:Name="projectReferenceGraphWatermark" HorizontalAlignment="Center"
+                               VerticalAlignment="Center">Project reference graph</TextBlock>
                   </Grid>
                 </TabItem>
+
+                <TabItem x:Name="targetGraphTab" Header="Targets" Visibility="Collapsed">
+                  <Grid>
+                    <TextBlock x:Name="targetGraphWatermark" HorizontalAlignment="Center"
+                               VerticalAlignment="Center">Target graph</TextBlock>
+                  </Grid>
+                </TabItem>
+
+                <TabItem x:Name="nugetGraphTab" Header="NuGet" Visibility="Collapsed">
+                  <Grid>
+                    <TextBlock x:Name="nugetGraphWatermark" HorizontalAlignment="Center"
+                               VerticalAlignment="Center">NuGet graph</TextBlock>
+                  </Grid>
+                </TabItem>
+
               </TabControl>
             </local:SplitterPanel.FirstChild>
 

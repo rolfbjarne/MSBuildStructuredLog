@@ -14,6 +14,7 @@
   </PropertyGroup>
 
   <PropertyGroup Label="Common Properties">
+    <BinlogToolVersion>1.0.28</BinlogToolVersion>
     <SignAssembly Condition="'$(SignAssembly)' == ''">false</SignAssembly>
     <DefineConstants Condition="'$(SignAssembly)' == 'true'">$(DefineConstants);SIGN;</DefineConstants>
     <DelaySign>false</DelaySign>
@@ -21,6 +22,7 @@
     <DebugType Condition="$(OS) == 'Windows_NT'">embedded</DebugType>
     <LangVersion>latest</LangVersion>
     <NoWarn>$(NoWarn);NU1701;CS8632</NoWarn>
+    <NuGetAudit>False</NuGetAudit>
   </PropertyGroup>
 
 </Project>

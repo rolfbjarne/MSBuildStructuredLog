@@ -2,24 +2,32 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text.RegularExpressions;
 using StructuredLogViewer;
 
 namespace Microsoft.Build.Logging.StructuredLogger
 {
     public class ProjectReferenceGraph : ISearchExtension
     {
-        private Dictionary<string, ICollection<string>> references = new(StringComparer.OrdinalIgnoreCase);
-        private Dictionary<string, int> projectHeights = new(StringComparer.OrdinalIgnoreCase);
         private int maxProjectHeight;
+
+        public bool AugmentOtherResults => false;
+
+        public Digraph Graph = new Digraph();
 
         public ProjectReferenceGraph(Build build)
         {
+            Graph = new Digraph();
+
             var evaluations = build.EvaluationFolder.Children.OfType<ProjectEvaluation>();
             foreach (var evaluation in evaluations)
             {
                 string projectFile = evaluation.ProjectFile;
-                string projectDirectory = Path.GetDirectoryName(projectFile);
+                if (projectFile.EndsWith("_wpftmp.csproj", StringComparison.OrdinalIgnoreCase) ||
+                    projectFile.EndsWith(".sln.metaproj", StringComparison.OrdinalIgnoreCase) ||
+                    projectFile.EndsWith("\\dirs.proj", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
 
                 var items = evaluation.FindChild<Folder>(Strings.Items);
                 if (items == null)
@@ -27,11 +35,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     continue;
                 }
 
-                if (!references.TryGetValue(projectFile, out var bucket))
-                {
-                    bucket = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    references[projectFile] = bucket;
-                }
+                var node = GetNode(projectFile);
 
                 var projectReferences = items.FindChild<AddItem>("ProjectReference");
                 if (projectReferences == null)
@@ -39,49 +43,44 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     continue;
                 }
 
+                string projectDirectory = Path.GetDirectoryName(projectFile);
                 foreach (var projectReference in projectReferences.Children.OfType<Item>())
                 {
                     var path = projectReference.Text;
                     var referencePath = Path.Combine(projectDirectory, path);
                     referencePath = TextUtilities.NormalizeFilePath(referencePath);
 
-                    bucket.Add(referencePath);
+                    var child = GetNode(referencePath);
+
+                    node.AddChild(child);
                 }
             }
 
-            foreach (var kvp in references.ToArray())
+            Vertex GetNode(string project)
             {
-                var project = kvp.Key;
-                references[project] = kvp.Value.OrderBy(s => s).ToArray();
-                CalculateHeight(project);
+                return Graph.GetOrCreate(project, GetTitle);
             }
 
-            if (projectHeights.Any())
-            {
-                maxProjectHeight = projectHeights.Values.Max();
-            }
-        }
+            var cycles = Graph.RemoveCycles();
+            Graph.CalculateHeight();
+            Graph.CalculateDepth();
+            Graph.ComputeTransitiveReduction();
 
-        private int CalculateHeight(string project)
-        {
-            if (!projectHeights.TryGetValue(project, out int height))
+            maxProjectHeight = Graph.MaxHeight;
+
+            if (cycles.Any())
             {
-                if (references.TryGetValue(project, out var projectReferences))
+                var folder = build.GetOrCreateNodeWithName<Folder>("Circular Project References");
+                foreach (var loop in cycles)
                 {
-                    foreach (var reference in projectReferences)
+                    var loopFolder = folder.GetOrCreateNodeWithName<Folder>(loop.First().Title);
+                    foreach (var item in loop)
                     {
-                        int referenceHeight = CalculateHeight(reference) + 1;
-                        if (referenceHeight > height)
-                        {
-                            height = referenceHeight;
-                        }
+                        var node = new Item { Text = item.Value };
+                        loopFolder.AddChild(node);
                     }
                 }
-
-                projectHeights[project] = height;
             }
-
-            return height;
         }
 
         public bool TryGetResults(NodeQueryMatcher matcher, IList<SearchResult> resultSet, int maxResults)
@@ -134,11 +133,11 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     }
                 }
 
-                if (visitedProjects.Add(path) && references.TryGetValue(path, out var bucket))
+                if (visitedProjects.Add(path) && Graph.TryFindVertex(path) is Vertex vertex)
                 {
-                    foreach (var referencedProjectPath in bucket)
+                    foreach (var referencedProjectPath in vertex.Outgoing)
                     {
-                        var referencedProject = PopulateReferences(referencedProjectPath);
+                        var referencedProject = PopulateReferences(referencedProjectPath.Value);
                         if (referencedProject != null)
                         {
                             node.AddChild(referencedProject);
@@ -158,8 +157,9 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 return node;
             }
 
-            foreach (var project in references.Keys)
+            foreach (var vertex in Graph.Vertices)
             {
+                var project = vertex.Value;
                 var match = projectMatcher.IsMatch(project);
                 if (match == null || match == SearchResult.EmptyQueryMatch)
                 {
@@ -191,14 +191,12 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
                 List<string> referencing = new();
 
-                foreach (var project in references.Keys)
+                var vertex = Graph.TryFindVertex(singleProject);
+                if (vertex.InDegree > 0)
                 {
-                    if (references.TryGetValue(project, out var bucket))
+                    foreach (var incoming in vertex.Incoming)
                     {
-                        if (bucket.Contains(singleProject))
-                        {
-                            referencing.Add(project);
-                        }
+                        referencing.Add(incoming.Value);
                     }
                 }
 
@@ -233,27 +231,19 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 resultSet.Add(new SearchResult(new Note { Text = $"Max = {maxProjectHeight}" }));
             }
 
-            foreach (var p in references.Keys)
+            foreach (var p in Graph.Vertices)
             {
-                if (projectHeights.TryGetValue(p, out int thisProjectHeight))
+                if (p.Height == height)
                 {
-                    if (thisProjectHeight == height)
+                    var projectWithHeight = CreateProject(p.Value);
+                    var searchResult = new SearchResult(projectWithHeight);
+                    resultSet.Add(searchResult);
+                    if (resultSet.Count >= maxResults)
                     {
-                        var projectWithHeight = CreateProject(p);
-                        var searchResult = new SearchResult(projectWithHeight);
-                        resultSet.Add(searchResult);
-                        if (resultSet.Count >= maxResults)
-                        {
-                            return;
-                        }
+                        return;
                     }
                 }
             }
-        }
-
-        private bool GetProjectsOfHeight(int height)
-        {
-            throw new NotImplementedException();
         }
 
         private Project CreateProject(string project)
@@ -263,6 +253,53 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 ProjectFile = project,
                 Name = Path.GetFileNameWithoutExtension(project)
             };
+        }
+
+        private Dictionary<string, string> titles = new(StringComparer.OrdinalIgnoreCase);
+
+        private string GetTitle(string filePath)
+        {
+            if (!titles.TryGetValue(filePath, out var key))
+            {
+                filePath = filePath.Replace("/", "\\");
+                var parts = filePath.Split('\\');
+                key = parts[parts.Length - 1];
+                for (int i = parts.Length - 2; i >= 0; i--)
+                {
+                    var candidate = CleanupKey(key);
+                    if (!titles.ContainsKey(candidate))
+                    {
+                        key = candidate;
+                        break;
+                    }
+
+                    key = parts[i] + "\\" + key;
+                    if (i == 0)
+                    {
+                        key = CleanupKey(key);
+                    }
+                }
+
+                titles[filePath] = key;
+                titles[key] = key;
+            }
+
+            return key;
+
+            string CleanupKey(string key)
+            {
+                if (key.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
+                {
+                    key = key.Substring(0, key.Length - ".csproj".Length);
+                }
+
+                if (key.Contains(".") || key.Contains("\\"))
+                {
+                    key = "\"" + key + "\"";
+                }
+
+                return key;
+            }
         }
     }
 }

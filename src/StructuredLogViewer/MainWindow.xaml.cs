@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Reflection;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
@@ -103,6 +104,19 @@ namespace StructuredLogViewer
             else if (exception is FileNotFoundException)
             {
                 if (toString.Contains(".betaId"))
+                {
+                    return true;
+                }
+            }
+            else if (exception is OperationCanceledException or AggregateException or TargetInvocationException)
+            {
+                return true;
+            }
+            else if (exception is ArgumentException argumentException)
+            {
+                // MS.Win32.Penimc.IPimcManager2.GetTablet(UInt32 tablet, IPimcTablet2& IPimcTablet)
+                // benign bug in WPF
+                if (argumentException.ToString().Contains("Penimc"))
                 {
                     return true;
                 }
@@ -389,6 +403,13 @@ namespace StructuredLogViewer
                 return true;
             }
 
+            if (filePath.EndsWith(".dot", StringComparison.OrdinalIgnoreCase) ||
+                filePath.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
+            {
+                OpenGraphFile(filePath);
+                return true;
+            }
+
             if (filePath.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) ||
                 filePath.EndsWith("proj", StringComparison.OrdinalIgnoreCase))
             {
@@ -656,6 +677,28 @@ namespace StructuredLogViewer
             }
         }
 
+        private void OpenGraphFile(string filePath)
+        {
+            DisplayBuild(null);
+
+            try
+            {
+                var graph = Digraph.Load(filePath);
+                graph.RemoveCycles();
+                graph.CalculateHeight();
+                graph.CalculateDepth();
+                graph.ComputeTransitiveReduction();
+
+                var graphHostControl = new GraphHostControl();
+                graphHostControl.Graph = graph;
+
+                SetContent(graphHostControl);
+            }
+            catch
+            {
+            }
+        }
+
         private void AddNuGetNode(Build build)
         {
             var nuget = new Package { Name = "NuGet" };
@@ -675,7 +718,13 @@ Search for a file coming from a NuGet package:
 Search for a specific version or version range:
     $nuget project(.csproj) 13.0.3
 
-Use project(.) or project(.csproj) to search all projects (slow)." };
+Use project(.) or project(.csproj) to search all projects (slow).
+
+Right-click the NuGet node above and click NuGet Graph to view the NuGet dependency graph
+for the entire build.
+
+Right-click a project or evaluation and click NuGet Graph to view the NuGet graph for
+that project." };
             nuget.AddChild(note);
             build.AddChild(nuget);
         }
@@ -687,6 +736,7 @@ Use project(.) or project(.csproj) to search all projects (slow)." };
                 try
                 {
                     BuildAnalyzer.AnalyzeBuild(build);
+                    build.SearchExtensions.Add(new SecretsSearch(build));
                     build.SearchExtensions.Add(new NuGetSearch(build));
                 }
                 catch (Exception ex)
@@ -758,6 +808,11 @@ Use project(.) or project(.csproj) to search all projects (slow)." };
             OpenLogFile();
         }
 
+        private void OpenGraph_Click(object sender, RoutedEventArgs e)
+        {
+            OpenGraphFile();
+        }
+
         private void Build_Click(object sender, RoutedEventArgs e)
         {
             OpenProjectOrSolution();
@@ -781,7 +836,7 @@ Use project(.) or project(.csproj) to search all projects (slow)." };
         private void OpenProjectOrSolution()
         {
             var openFileDialog = new OpenFileDialog();
-            openFileDialog.Filter = "MSBuild projects and solutions (*.sln;*.*proj)|*.sln;*.*proj|All files (*.*)|*";
+            openFileDialog.Filter = "MSBuild projects and solutions (*.sln;*.slnx;*.*proj)|*.sln;*.slnx;*.*proj|All files (*.*)|*";
             openFileDialog.Title = "Open a solution or project";
             openFileDialog.CheckFileExists = true;
             var result = openFileDialog.ShowDialog(this);
@@ -830,6 +885,21 @@ Use project(.) or project(.csproj) to search all projects (slow)." };
         private void Reload()
         {
             OpenLogFile(logFilePath);
+        }
+
+        private void OpenGraphFile()
+        {
+            var openFileDialog = new OpenFileDialog();
+            openFileDialog.Filter = Serialization.OpenFileGraphFilter;
+            openFileDialog.Title = "Open a graph file";
+            openFileDialog.CheckFileExists = true;
+            var result = openFileDialog.ShowDialog(this);
+            if (result != true)
+            {
+                return;
+            }
+
+            OpenGraphFile(openFileDialog.FileName);
         }
 
         private async System.Threading.Tasks.Task RedactSecrets()
@@ -985,6 +1055,11 @@ Use project(.) or project(.csproj) to search all projects (slow)." };
             {
                 FocusSearch();
             }
+            else if (e.Key == Key.F && e.KeyboardDevice.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
+            {
+                CurrentBuildControl?.SelectFindInFilesTab();
+                e.Handled = true;
+            }
         }
 
         private void Window_KeyUp(object sender, KeyEventArgs e)
@@ -1097,6 +1172,11 @@ Use project(.) or project(.csproj) to search all projects (slow)." };
             Process.Start(new ProcessStartInfo("https://msbuildlog.com") { UseShellExecute = true });
         }
 
+        private void HelpLink3_Click(object sender, RoutedEventArgs e)
+        {
+            Process.Start(new ProcessStartInfo("https://github.com/KirillOsenkov/MSBuildStructuredLog/wiki/Search-Syntax") { UseShellExecute = true });
+        }
+
         private void HelpAbout_Click(object sender, RoutedEventArgs e)
         {
             MessageBox.Show(VersionMessage);
@@ -1142,7 +1222,7 @@ Use project(.) or project(.csproj) to search all projects (slow)." };
         {
             if (!Dispatcher.CheckAccess())
             {
-                Dispatcher.Invoke(() =>
+                Dispatcher.BeginInvoke(() =>
                 {
                     action();
                 });

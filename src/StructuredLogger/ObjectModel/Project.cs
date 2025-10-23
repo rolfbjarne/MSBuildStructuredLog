@@ -118,12 +118,19 @@ namespace Microsoft.Build.Logging.StructuredLogger
         public string AdornmentString => this.GetAdornmentString();
 
         public string TargetFramework { get; set; }
+        public bool IsOuterProject { get; set; }
 
         public string Platform { get; set; }
 
         public string Configuration { get; set; }
 
         public int EvaluationId { get; set; }
+
+        /// <summary>
+        /// Used for checking whether TargetSkipped.OriginalBuildEventContext is valid and
+        /// points to a valid project from this build.
+        /// </summary>
+        public int ProjectInstanceId { get; set; }
 
         public string EvaluationText { get; set; } = "";
 

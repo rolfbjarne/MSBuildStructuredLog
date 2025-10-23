@@ -18,8 +18,10 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
         public IList<ISearchExtension> SearchExtensions { get; } = new List<ISearchExtension>();
 
+        public Func<ProjectEvaluation, string> TextProvider { get; set; }
+
         public bool IsAnalyzed { get; set; }
-        public bool Succeeded { get; set; }
+        public bool Succeeded { get; set; } = true;
         public Error FirstError { get; set; }
 
         public string LogFilePath { get; set; }
@@ -197,6 +199,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
         public FileCopyMap FileCopyMap { get; set; }
         public ProjectReferenceGraph ProjectReferenceGraph { get; set; }
+        public TargetGraphManager TargetGraphManager { get; set; }
 
         public Dictionary<string, HashSet<string>> TaskAssemblies { get; } = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
 

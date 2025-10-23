@@ -18,6 +18,8 @@ namespace BinlogTool
     binlogtool listtools input.binlog
     binlogtool savefiles input.binlog output_path
     binlogtool listnuget input.binlog output_path
+    binlogtool listproperties input.binlog
+    binlogtool doublewrites input.binlog output_path
     binlogtool reconstruct input.binlog output_path
     binlogtool savestrings input.binlog output.txt
     binlogtool search *.binlog search string
@@ -74,15 +76,18 @@ namespace BinlogTool
                 return 0;
             }
 
-            if (string.Equals(firstArg, "compilerinvocations", StringComparison.OrdinalIgnoreCase))
+            if (args.Length == 2 && string.Equals(firstArg, "listProperties", StringComparison.OrdinalIgnoreCase))
             {
-                string binlog = null;
+                var binlog = args[1];
+                new ListProperties().Run(binlog);
+                return 0;
+            }
+
+            if (args.Length >= 2 && string.Equals(firstArg, "compilerinvocations", StringComparison.OrdinalIgnoreCase))
+            {
+                string binlog = args[1];
                 string outputFile = null;
-                if (args.Length >= 2)
-                {
-                    binlog = args[1];
-                }
-                else if (args.Length == 3)
+                if (args.Length == 3)
                 {
                     outputFile = args[2];
                 }
@@ -90,6 +95,23 @@ namespace BinlogTool
                 if (File.Exists(binlog))
                 {
                     new CompilerInvocations().Run(binlog, outputFile);
+                }
+
+                return 0;
+            }
+
+            if (args.Length >= 2 && string.Equals(firstArg, "doublewrites", StringComparison.OrdinalIgnoreCase))
+            {
+                string binlog = args[1];
+                string outputFile = null;
+                if (args.Length == 3)
+                {
+                    outputFile = args[2];
+                }
+
+                if (File.Exists(binlog))
+                {
+                    new DoubleWrites().Run(binlog, outputFile);
                 }
 
                 return 0;

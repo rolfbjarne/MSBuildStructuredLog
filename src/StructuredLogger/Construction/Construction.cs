@@ -8,6 +8,7 @@ using System.Linq;
 using Microsoft.Build.Collections;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Framework.Profiler;
+using StructuredLogger.BinaryLogger;
 
 namespace Microsoft.Build.Logging.StructuredLogger
 {
@@ -84,6 +85,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
             Intern(nameof(Target));
             Intern(nameof(Task));
             Intern(nameof(TimedNode));
+            Intern(nameof(TimedMessage));
             Intern(nameof(Warning));
         }
 
@@ -113,6 +115,10 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 lock (syncLock)
                 {
                     Build.StartTime = args.Timestamp;
+
+                    // Since we saw BuildStarted we now need to see BuildFinished,
+                    // otherwise the build was cancelled or interrupted
+                    Build.Succeeded = false;
 
                     if (args.BuildEnvironment?.Count > 0)
                     {
@@ -345,20 +351,11 @@ namespace Microsoft.Build.Logging.StructuredLogger
         {
             string targetName = Intern(args.TargetName);
             string messageText = args.Message;
-
             var originalBuildEventContext = args.OriginalBuildEventContext;
-            var skipReason = args.SkipReason;
-            if ((skipReason == TargetSkipReason.PreviouslyBuiltSuccessfully ||
-                skipReason == TargetSkipReason.PreviouslyBuiltUnsuccessfully) && originalBuildEventContext != null)
-            {
-                var prefix = "Target \"" + targetName + "\" "; // trim the Target Name text since the node will already display that
-                if (messageText.StartsWith(prefix, StringComparison.Ordinal))
-                {
-                    messageText = messageText.Substring(prefix.Length);
-                }
-            }
 
-            messageText = Intern(messageText);
+            bool addMessageAsAChildNode = true;
+
+            var skipReason = args.SkipReason;
 
             Target target = null;
 
@@ -378,46 +375,80 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     args.BuildReason);
             }
 
+            Project originalProject = null;
+
+            // In case where target build results were retrieved from cache, and the original build
+            // happened in another build, the OriginalBuildEventContext will be invalid.
+            // Detect this case and don't create a link to the random unrelated project.
             if (originalBuildEventContext != null && originalBuildEventContext.ProjectContextId != BuildEventContext.InvalidProjectContextId)
             {
-                var originalProject = GetProject(originalBuildEventContext.ProjectContextId);
-                if (originalProject != null)
+                originalProject = GetProject(originalBuildEventContext.ProjectContextId);
+                if (originalProject != null && originalProject.ProjectInstanceId != originalBuildEventContext.ProjectInstanceId)
                 {
-                    target.ParentTarget = messageText;
-                    if (originalBuildEventContext.TargetId != -1 &&
-                        originalProject.GetTargetById(originalBuildEventContext.TargetId) is Target originalTarget)
-                    {
-                        target.OriginalNode = originalTarget;
-                    }
-                    else
-                    {
-                        // the original target was skipped because of false condition, so its target id == -1
-                        // Need to look it up by name, if unambiguous
-                        var candidates = originalProject
-                            .Children
-                            .OfType<Target>()
-                            .Where(t => t.Name == targetName)
-                            .ToArray();
-                        if (candidates.Length == 1)
-                        {
-                            originalTarget = candidates[0];
-                        }
-                        else
-                        {
-                            originalTarget = null;
-                        }
-
-                        target.OriginalNode = (TimedNode)originalTarget ?? originalProject;
-                    }
+                    originalProject = null;
+                    messageText = $"{messageText} Target results likely loaded from cache.";
                 }
             }
-            else
+
+            if (originalProject != null)
+            {
+                var originalNode = FindOriginalTarget(originalBuildEventContext.TargetId, originalProject, targetName);
+                if (originalNode != null && (originalNode is not Target || originalNode.Name == targetName))
+                {
+                    var prefix = "Target \"" + targetName + "\" "; // trim the Target Name text since the node will already display that
+                    if (messageText.StartsWith(prefix, StringComparison.Ordinal))
+                    {
+                        messageText = messageText.Substring(prefix.Length);
+                    }
+
+                    target.OriginalNode = originalNode;
+                    target.ParentTarget = messageText;
+                    addMessageAsAChildNode = false;
+                }
+            }
+
+            messageText = Intern(messageText);
+
+            if (addMessageAsAChildNode)
             {
                 var messageNode = new Message { Text = messageText };
                 target.AddChild(messageNode);
             }
+            else
+            {
+                target.ParentTarget = messageText;
+            }
 
             target.Skipped = true;
+        }
+
+        private TimedNode FindOriginalTarget(int targetId, Project originalProject, string targetName)
+        {
+            if (targetId != -1 &&
+                originalProject.GetTargetById(targetId) is Target originalTarget)
+            {
+                return originalTarget;
+            }
+            else
+            {
+                // the original target was skipped because of false condition, so its target id == -1
+                // Need to look it up by name, if unambiguous
+                var candidates = originalProject
+                    .Children
+                    .OfType<Target>()
+                    .Where(t => t.Name == targetName)
+                    .ToArray();
+                if (candidates.Length == 1)
+                {
+                    originalTarget = candidates[0];
+                }
+                else
+                {
+                    originalTarget = null;
+                }
+
+                return (TimedNode)originalTarget ?? originalProject;
+            }
         }
 
         public void TaskStarted(object sender, TaskStartedEventArgs args)
@@ -583,6 +614,16 @@ namespace Microsoft.Build.Logging.StructuredLogger
                             AddPropertiesSorted(propertiesFolder, projectEvaluation, projectEvaluationFinished.Properties);
                             AddItems(itemsNode, projectEvaluationFinished.Items);
                         }
+                    }
+                    else if (e is BuildCanceledEventArgs buildCanceledEventArgs)
+                    {
+                        // If the build was canceled we want to show a message in the build log view.
+                        messageProcessor.Process(new BuildMessageEventArgs(
+                            Intern(buildCanceledEventArgs.Message),
+                            Intern(buildCanceledEventArgs.HelpKeyword),
+                            Intern(buildCanceledEventArgs.SenderName),
+                            MessageImportance.High,
+                            buildCanceledEventArgs.Timestamp));
                     }
                 }
             }
@@ -867,7 +908,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
                 node.AddChild(metadataFolder);
             }
-        }   
+        }
 
         private void HandleException(Exception ex)
         {
@@ -906,6 +947,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
             Project result = _projectIdToProjectMap.GetOrAdd(projectId,
                 id => CreateProject(id));
             result.NodeId = args.BuildEventContext.NodeId;
+            result.ProjectInstanceId = args.BuildEventContext.ProjectInstanceId;
 
             UpdateProject(result, args);
 
@@ -1124,8 +1166,20 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 return;
             }
 
+            if (properties is IEnumerable<DictionaryEntry> entries)
+            {
+                properties = entries
+                    .Select(e => new KeyValuePair<string, string>(Convert.ToString(e.Key), Convert.ToString(e.Value)))
+                    .ToArray();
+            }
+
             var list = (ICollection<KeyValuePair<string, string>>)properties;
             int count = list.Count;
+            if (count == 0)
+            {
+                return;
+            }
+
             IEnumerable<KeyValuePair<string, string>> sorted = list;
 
             if (list is ArrayDictionary<string, string> arrayDictionary)
@@ -1284,16 +1338,19 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 parent.EnsureChildrenCapacity(collection.Count);
             }
 
-            bool tfvFound = false;
-            bool platformFound = false;
-            bool configFound = false;
+            string targetFramework = null;
+            string targetFrameworks = null;
+            string targetFrameworkVersion = null;
 
             foreach (var kvp in properties)
             {
+                string propertyName = kvp.Key;
+                string propertyValue = kvp.Value;
+
                 var property = new Property
                 {
-                    Name = SoftIntern(kvp.Key),
-                    Value = SoftIntern(kvp.Value)
+                    Name = SoftIntern(propertyName),
+                    Value = SoftIntern(propertyValue)
                 };
 
                 parent.Children.Add(property); // don't use AddChild for performance
@@ -1301,38 +1358,45 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
                 if (project != null)
                 {
-                    if (!tfvFound && string.Equals(kvp.Key, Strings.TargetFramework, StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(propertyName, Strings.TargetFramework, StringComparison.OrdinalIgnoreCase))
                     {
-                        project.TargetFramework = kvp.Value;
-                        tfvFound = true;
+                        targetFramework = propertyValue;
                     }
-                    else if (!tfvFound && string.Equals(kvp.Key, Strings.TargetFrameworks, StringComparison.OrdinalIgnoreCase))
+                    else if (string.Equals(propertyName, Strings.TargetFrameworks, StringComparison.OrdinalIgnoreCase))
                     {
-                        // we want TargetFramework to take precedence over TargetFrameworks when both are present
-                        if (string.IsNullOrEmpty(project.TargetFramework) && !string.IsNullOrEmpty(kvp.Value))
-                        {
-                            project.TargetFramework = kvp.Value;
-                            tfvFound = true;
-                        }
+                        targetFrameworks = propertyValue;
                     }
-                    // If neither of the above are there - look for the old project system
-                    else if (!tfvFound && project.TargetFramework is null && string.Equals(kvp.Key, Strings.TargetFrameworkVersion, StringComparison.OrdinalIgnoreCase))
+                    else if (string.Equals(propertyName, Strings.TargetFrameworkVersion, StringComparison.OrdinalIgnoreCase))
                     {
                         // Note this is untranslated, so e.g. "v4.6.2" instead of "net462" - this is intentional as it
                         // renders the badge for all projects, but you can still use this difference to tell what is/isn't an SDK project.
-                        project.TargetFramework = kvp.Value;
-                        tfvFound = true;
+                        targetFrameworkVersion = propertyValue;
                     }
-                    else if (!platformFound && string.Equals(kvp.Key, Strings.Platform, StringComparison.OrdinalIgnoreCase))
+                    else if (string.Equals(propertyName, Strings.Platform, StringComparison.OrdinalIgnoreCase))
                     {
-                        project.Platform = kvp.Value;
-                        platformFound = true;
+                        project.Platform = propertyValue;
                     }
-                    else if (!configFound && string.Equals(kvp.Key, Strings.Configuration, StringComparison.OrdinalIgnoreCase))
+                    else if (string.Equals(propertyName, Strings.Configuration, StringComparison.OrdinalIgnoreCase))
                     {
-                        project.Configuration = kvp.Value;
-                        configFound = true;
+                        project.Configuration = propertyValue;
                     }
+                }
+            }
+
+            if (project != null)
+            {
+                if (targetFramework != null)
+                {
+                    project.TargetFramework = targetFramework;
+                }
+                else if (targetFrameworks != null)
+                {
+                    project.IsOuterProject = true;
+                    project.TargetFramework = targetFrameworks;
+                }
+                else if (targetFrameworkVersion != null)
+                {
+                    project.TargetFramework = targetFrameworkVersion;
                 }
             }
         }
