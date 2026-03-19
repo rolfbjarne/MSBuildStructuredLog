@@ -31,7 +31,7 @@
                     Padding="4,2,4,2"
                     MinHeight="27">
                   <DockPanel>
-                    <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" Text="Project: " />
+                    <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" Text="Project: " x:Name="projectContextLabel" />
                     <ContentControl Focusable="false" DockPanel.Dock="Top" VerticalAlignment="Center" x:Name="propertiesAndItemsContext" />
                   </DockPanel>
                 </Border>
@@ -129,6 +129,13 @@
                   <Grid>
                     <TextBlock x:Name="nugetGraphWatermark" HorizontalAlignment="Center"
                                VerticalAlignment="Center">NuGet graph</TextBlock>
+                  </Grid>
+                </TabItem>
+
+                <TabItem x:Name="propertyGraphTab" Header="Properties" Visibility="Collapsed">
+                  <Grid>
+                    <TextBlock x:Name="propertyGraphWatermark" HorizontalAlignment="Center"
+                               VerticalAlignment="Center">Property graph</TextBlock>
                   </Grid>
                 </TabItem>
 

@@ -29,10 +29,22 @@ namespace StructuredLogViewer.Controls
         public TreeViewItem SelectedTreeViewItem { get; private set; }
         public string LogFilePath => Build?.LogFilePath;
 
+        private readonly List<string> attachedBinlogs = new List<string>();
+        public int AttachedBinlogCount => attachedBinlogs.Count;
+
+        public void AttachBinlog(string path)
+        {
+            if (!string.IsNullOrEmpty(path) && !attachedBinlogs.Contains(path, StringComparer.OrdinalIgnoreCase))
+            {
+                attachedBinlogs.Add(path);
+            }
+        }
+
         private SourceFileResolver sourceFileResolver;
         private ArchiveFileResolver archiveFile => sourceFileResolver.ArchiveFile;
         private PreprocessedFileManager preprocessedFileManager;
         private NavigationHelper navigationHelper;
+        private PropertyGraph propertyGraph;
 
         private MenuItem searchMenuGroup;
         private MenuItem copyMenuGroup;
@@ -44,6 +56,7 @@ namespace StructuredLogViewer.Controls
         private MenuItem searchInSubtreeItem;
         private MenuItem searchInNodeByNameItem;
         private MenuItem searchThisNode;
+        private MenuItem viewPropertyItem;
         private MenuItem excludeSubtreeFromSearchItem;
         private MenuItem excludeNodeByNameFromSearch;
         private MenuItem searchInclusiveWithinThisTimespan;  // Search with Start OR End time overlaps this duration.
@@ -63,6 +76,7 @@ namespace StructuredLogViewer.Controls
         private MenuItem showFileInExplorerItem;
         private MenuItem preprocessItem;
         private MenuItem targetGraphItem;
+        private MenuItem propertyGraphItem;
         private MenuItem viewInTargetGraphItem;
         private MenuItem nugetGraphItem;
         private MenuItem searchNuGetItem;
@@ -145,7 +159,7 @@ namespace StructuredLogViewer.Controls
             propertiesAndItemsControl.RecentItemsCategory = "PropertiesAndItems";
 
             secretsSearch = (SecretsSearch)build.SearchExtensions.FirstOrDefault(se => se is SecretsSearch);
-            SetProjectContext(null);
+            SetProjectContext(null, force: true);
 
             VirtualizingPanel.SetIsVirtualizing(treeView, SettingsService.EnableTreeViewVirtualization);
 
@@ -220,7 +234,9 @@ namespace StructuredLogViewer.Controls
             searchInclusiveWithinThisTimespan = new MenuItem() { Header = "Search overlapping this duration" };
             searchExclusiveWithinThisTimespan = new MenuItem() { Header = "Search within this duration" };
             searchInNodeByNameItem = new MenuItem() { Header = "Search in this node." };
-            searchThisNode = new MenuItem() { Header = "Search This Node" };
+            searchThisNode = new MenuItem() { Header = "Search this node" };
+            viewPropertyItem = new MenuItem { Header = "View property" };
+
             goToTimeLineItem = new MenuItem() { Header = "Timeline" };
             goToTracingItem = new MenuItem() { Header = "Tracing" };
             copyChildrenItem = new MenuItem() { Header = "Copy children" };
@@ -238,9 +254,10 @@ namespace StructuredLogViewer.Controls
             copyFilePathItem = new MenuItem() { Header = "Copy file path" };
             showFileInExplorerItem = new MenuItem() { Header = "Show in Explorer" };
             preprocessItem = new MenuItem() { Header = "Preprocess" };
-            targetGraphItem = new MenuItem { Header = "Target Graph" };
-            viewInTargetGraphItem = new MenuItem { Header = "Target Graph" };
-            nugetGraphItem = new MenuItem { Header = "NuGet Graph" };
+            targetGraphItem = new MenuItem { Header = "Target graph" };
+            propertyGraphItem = new MenuItem { Header = "Property graph" };
+            viewInTargetGraphItem = new MenuItem { Header = "Target graph" };
+            nugetGraphItem = new MenuItem { Header = "NuGet graph" };
             var nugetImage = new System.Windows.Shapes.Path
             {
                 Data = (Geometry)Application.Current.FindResource("NuGetGeometry"),
@@ -265,6 +282,7 @@ namespace StructuredLogViewer.Controls
             searchExclusiveWithinThisTimespan.Click += (s, a) => SearchExclusiveWithinThisTimespan();
             searchInNodeByNameItem.Click += (s, a) => SearchInNodeByName();
             searchThisNode.Click += (s, a) => SearchThisNode();
+            viewPropertyItem.Click += (s, a) => ViewProperty();
             goToTimeLineItem.Click += (s, a) => GoToTimeLine();
             goToTracingItem.Click += (s, a) => GoToTracing();
             copyChildrenItem.Click += (s, a) => CopyChildren();
@@ -283,6 +301,7 @@ namespace StructuredLogViewer.Controls
             showFileInExplorerItem.Click += (s, a) => ShowFileInExplorer();
             preprocessItem.Click += (s, a) => Preprocess(treeView.SelectedItem as IPreprocessable);
             targetGraphItem.Click += (s, a) => ViewTargetGraph(treeView.SelectedItem as IProjectOrEvaluation);
+            propertyGraphItem.Click += (s, a) => ViewPropertyGraph(treeView.SelectedItem as IProjectOrEvaluation);
             viewInTargetGraphItem.Click += (s, a) => ViewTargetGraphForTarget(treeView.SelectedItem as Target);
             nugetGraphItem.Click += (s, a) => ViewNuGetGraph(treeView.SelectedItem as IProjectOrEvaluation);
             searchNuGetItem.Click += (s, a) => SearchNuGet(treeView.SelectedItem as IProjectOrEvaluation);
@@ -298,9 +317,11 @@ namespace StructuredLogViewer.Controls
             contextMenu.AddItem(debugItem);
             contextMenu.AddItem(viewSourceItem);
             contextMenu.AddItem(viewFullTextItem);
+            contextMenu.AddItem(viewPropertyItem);
             contextMenu.AddItem(openFileItem);
             contextMenu.AddItem(preprocessItem);
             contextMenu.AddItem(targetGraphItem);
+            contextMenu.AddItem(propertyGraphItem);
             contextMenu.AddItem(nugetGraphItem);
 
             contextMenu.AddItem(searchMenuGroup);
@@ -418,10 +439,202 @@ Right-clicking a project node may show the 'Preprocess' option if the version of
             preprocessedFileManager.DisplayFile += filePath => DisplayFile(filePath);
             Build.TextProvider = evaluation => preprocessedFileManager.GetPreprocessedText(evaluation);
 
+            propertyGraph = new PropertyGraph(preprocessedFileManager, propertiesAndItemsSearch);
+            propertyGraph.PropertySearchRequested += propertyName =>
+            {
+                propertiesAndItemsControl.SearchText += $" \"{propertyName}\"";
+            };
+
             navigationHelper = new NavigationHelper(Build, sourceFileResolver);
             navigationHelper.OpenFileRequested += filePath => DisplayFile(filePath);
 
             centralTabControl.SelectionChanged += CentralTabControl_SelectionChanged;
+        }
+
+        /// <summary>
+        /// Returns the workspace directory for VS Code.
+        /// Uses the binlog file's directory, or null if the path doesn't exist locally.
+        /// </summary>
+        public string GetWorkspacePath()
+        {
+            if (Build == null) return null;
+
+            var binlogDir = Path.GetDirectoryName(Build.LogFilePath);
+            if (!string.IsNullOrEmpty(binlogDir) && Directory.Exists(binlogDir))
+            {
+                return FindRepoRoot(binlogDir) ?? binlogDir;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Walks up from a directory to find a repository root (contains .git, .sln, or .csproj).
+        /// </summary>
+        private static string FindRepoRoot(string startDir)
+        {
+            var dir = startDir;
+            while (!string.IsNullOrEmpty(dir))
+            {
+                if (Directory.Exists(Path.Combine(dir, ".git")))
+                    return dir;
+                if (Directory.GetFiles(dir, "*.sln", SearchOption.TopDirectoryOnly).Length > 0)
+                    return dir;
+                var parent = Path.GetDirectoryName(dir);
+                if (parent == dir) break;
+                dir = parent;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Launches VS Code with the workspace folder and binlog URI handler.
+        /// Auto-installs the binlog-analyzer extension if not already installed.
+        /// </summary>
+        public void OpenInVSCode()
+        {
+            var binlogPath = Build?.LogFilePath;
+            if (string.IsNullOrEmpty(binlogPath))
+            {
+                MessageBox.Show("No binlog file path available.", "Open in VS Code", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var codeExe = FindVSCodeExecutable();
+            if (codeExe == null)
+            {
+                MessageBox.Show(
+                    "Could not find VS Code (Code.exe). Make sure VS Code is installed.",
+                    "Open in VS Code",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return;
+            }
+
+            try
+            {
+                TPLTask.Run(() => EnsureExtensionInstalled(codeExe));
+
+                var folder = GetWorkspacePath();
+
+                // Build the URI to trigger the extension's binlog loading
+                var uri = "vscode://dotutils.binlog-analyzer/open?path=" + Uri.EscapeDataString(binlogPath);
+                foreach (var attached in attachedBinlogs)
+                {
+                    uri += "&path=" + Uri.EscapeDataString(attached);
+                }
+
+                // Launch VS Code with folder, then send URI after a short delay.
+                // Combining --new-window + --open-url in one call can cause VS Code to ignore the folder.
+                var folderArg = !string.IsNullOrEmpty(folder) ? $"\"{folder}\"" : "";
+                Process.Start(new ProcessStartInfo { FileName = codeExe, Arguments = $"--new-window {folderArg}".Trim(), UseShellExecute = true });
+
+                var capturedUri = uri;
+                TPLTask.Run(async () =>
+                {
+                    try
+                    {
+                        await TPLTask.Delay(1000);
+                        Process.Start(new ProcessStartInfo { FileName = codeExe, Arguments = $"--open-url \"{capturedUri}\"", UseShellExecute = true });
+                    }
+                    catch { }
+                });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"Failed to open VS Code.\n\n{ex.Message}",
+                    "Open in VS Code",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+        }
+
+        private static readonly string ExtensionId = "dotutils.binlog-analyzer";
+
+        private static void EnsureExtensionInstalled(string codeExe)
+        {
+            try
+            {
+                var codeDir = Path.GetDirectoryName(codeExe);
+                var codeCli = Path.Combine(codeDir, "bin", "code.cmd");
+                if (!File.Exists(codeCli))
+                {
+                    codeCli = Path.Combine(codeDir, "bin", "code");
+                }
+
+                // Check if extension is already installed
+                var checkPsi = new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = $"/c \"{codeCli}\" --list-extensions",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                };
+
+                using var checkProc = Process.Start(checkPsi);
+                var output = checkProc?.StandardOutput.ReadToEnd() ?? "";
+                checkProc?.WaitForExit(10000);
+
+                if (output.IndexOf(ExtensionId, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return;
+                }
+
+                // Install from VS Code Marketplace
+                var installPsi = new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = $"/c \"{codeCli}\" --install-extension {ExtensionId} --force",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+
+                using var installProc = Process.Start(installPsi);
+                installProc?.WaitForExit(60000);
+            }
+            catch
+            {
+                // Non-fatal — user can install manually
+            }
+        }
+
+        private static string FindVSCodeExecutable()
+        {
+            // Check common install locations for Code.exe
+            string[] candidates =
+            {
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Microsoft VS Code", "Code.exe"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft VS Code", "Code.exe"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Microsoft VS Code", "Code.exe"),
+            };
+
+            foreach (var candidate in candidates)
+            {
+                if (File.Exists(candidate))
+                    return candidate;
+            }
+
+            // Fallback: resolve from code.cmd in PATH
+            try
+            {
+                var pathDirs = Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? Array.Empty<string>();
+                foreach (var dir in pathDirs)
+                {
+                    var codeCmdPath = Path.Combine(dir, "code.cmd");
+                    if (File.Exists(codeCmdPath))
+                    {
+                        // code.cmd is in <install>/bin/, Code.exe is in <install>/
+                        var codeExe = Path.Combine(Path.GetDirectoryName(dir) ?? dir, "Code.exe");
+                        if (File.Exists(codeExe))
+                            return codeExe;
+                    }
+                }
+            }
+            catch { }
+
+            return null;
         }
 
         public void Dispose()
@@ -478,6 +691,7 @@ Right-clicking a project node may show the 'Preprocess' option if the version of
             excludeNodeByNameFromSearch = null;
             searchInNodeByNameItem = null;
             searchThisNode = null;
+            viewPropertyItem = null;
             goToTimeLineItem = null;
             goToTracingItem = null;
             copyChildrenItem = null;
@@ -492,6 +706,7 @@ Right-clicking a project node may show the 'Preprocess' option if the version of
             copyFilePathItem = null;
             preprocessItem = null;
             targetGraphItem = null;
+            propertyGraphItem = null;
             viewInTargetGraphItem = null;
             nugetGraphItem = null;
             searchNuGetItem = null;
@@ -862,6 +1077,30 @@ Recent (");
 
         private void Preprocess(IPreprocessable project) => preprocessedFileManager.ShowPreprocessed(project);
 
+        private void ViewPropertyGraph(IProjectOrEvaluation projectOrEvaluation)
+        {
+            var graph = new Digraph();
+            var context = new PropertyGraph.GraphWalkContext()
+            {
+                Graph = graph,
+                Evaluation = projectOrEvaluation.GetEvaluation()
+            };
+            var resultNode = propertyGraph.GetPropertyGraph(context);
+
+            graph.RemoveCycles();
+            graph.CalculateHeight();
+            graph.CalculateDepth();
+            graph.ComputeTransitiveReduction();
+
+            var host = new GraphHostControl();
+            host.DisplayText += text => DisplayText(text, "Graph");
+            host.GoToSearch += text => SearchForProperty(text);
+            host.Graph = graph;
+            propertyGraphTab.Content = host;
+            propertyGraphTab.Visibility = Visibility.Visible;
+            centralTabControl.SelectedItem = propertyGraphTab;
+        }
+
         private void ViewTargetGraph(IProjectOrEvaluation projectOrEvaluation)
         {
             var targetGraph = Build.TargetGraphManager.GetTargetGraph(projectOrEvaluation.GetEvaluation(Build));
@@ -1028,11 +1267,13 @@ Recent (");
             sortChildrenByNameItem.Visibility = hasChildrenVisibility;
             sortChildrenByDurationItem.Visibility = hasChildrenVisibility;
             filterChildrenItem.Visibility = hasChildrenVisibility;
+            var projectOrEvaluationVisibility = node is IProjectOrEvaluation ? Visibility.Visible : Visibility.Collapsed;
             preprocessItem.Visibility = node is IPreprocessable p && preprocessedFileManager.CanPreprocess(p) ? Visibility.Visible : Visibility.Collapsed;
-            targetGraphItem.Visibility = node is IProjectOrEvaluation ? Visibility.Visible : Visibility.Collapsed;
+            targetGraphItem.Visibility = projectOrEvaluationVisibility;
             viewInTargetGraphItem.Visibility = node is Target ? Visibility.Visible : Visibility.Collapsed;
+            propertyGraphItem.Visibility = projectOrEvaluationVisibility;
             nugetGraphItem.Visibility = node is IProjectOrEvaluation or Package ? Visibility.Visible : Visibility.Collapsed;
-            searchNuGetItem.Visibility = node is IProjectOrEvaluation ? Visibility.Visible : Visibility.Collapsed;
+            searchNuGetItem.Visibility = projectOrEvaluationVisibility;
             Visibility canRun = Build?.LogFilePath != null && node is Task ? Visibility.Visible : Visibility.Collapsed;
             runItem.Visibility = canRun;
             debugItem.Visibility = canRun;
@@ -1047,6 +1288,20 @@ Recent (");
             else
             {
                 searchThisNode.Visibility = Visibility.Collapsed;
+            }
+
+            if (node is Property ||
+                node?.Parent is { } parent &&
+                (parent.Title == Strings.PropertyReassignmentFolder ||
+                parent?.Parent?.Title == Strings.PropertyReassignmentFolder ||
+                parent.Title == Strings.PropertyAssignmentFolder ||
+                parent?.Parent?.Title == Strings.PropertyAssignmentFolder))
+            {
+                viewPropertyItem.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                viewPropertyItem.Visibility = Visibility.Collapsed;
             }
 
             bool isFavorite = IsFavorite(node);
@@ -1124,6 +1379,8 @@ Recent (");
             NodeQueryMatcher nodeQueryMatcher = new NodeQueryMatcher(searchText);
             bool isSecretsSearch = !string.IsNullOrEmpty(searchText) && searchText.StartsWith("$secret");
 
+            List<System.Threading.Tasks.Task<(string filePath, SourceText sourceText, IReadOnlyList<int> resultLines)>> tasks = new();
+
             foreach (var file in archiveFile.Files)
             {
                 if (cancellationToken.IsCancellationRequested)
@@ -1141,12 +1398,21 @@ Recent (");
                 }
                 else
                 {
-                    var haystack = file.Value;
-                    var resultsInFile = haystack.Find(searchText);
-                    if (resultsInFile.Count > 0)
+                    var task = TPLTask.Run(() =>
                     {
-                        results.Add((file.Key, resultsInFile.Select(lineNumber => (lineNumber, haystack.GetLineText(lineNumber)))));
-                    }
+                        var resultsInFile = file.Value.Find(searchText);
+                        return (file.Key, file.Value, resultsInFile);
+                    });
+                    tasks.Add(task);
+                }
+            }
+
+            foreach (var task in tasks)
+            {
+                var result = task.Result;
+                if (result.resultLines.Count > 0)
+                {
+                    results.Add((result.filePath, result.resultLines.Select(lineNumber => (lineNumber, result.sourceText.GetLineText(lineNumber)))));
                 }
             }
 
@@ -1181,6 +1447,7 @@ Recent (");
                     {
                         var sourceFileLine = new SourceFileLine()
                         {
+                            SourceFilePath = file.Item1,
                             LineNumber = line.Item1 + 1,
                             LineText = line.Item2
                         };
@@ -1556,13 +1823,28 @@ Recent (");
 
         private object projectContext;
 
-        public void SetProjectContext(object contents)
+        public void SetProjectContext(object contents, bool force = false)
         {
+            if (projectContext == contents && !force)
+            {
+                return;
+            }
+
+            var visibility = contents != null ? Visibility.Visible : Visibility.Collapsed;
+
+            contents ??= "A project or evaluation must be selected.";
+
             projectContext = contents;
             propertiesAndItemsContext.Content = contents;
-            var visibility = contents != null ? Visibility.Visible : Visibility.Collapsed;
-            projectContextBorder.Visibility = visibility;
+            projectContextBorder.Visibility = Visibility.Visible;
+            projectContextLabel.Visibility = visibility;
             propertiesAndItemsControl.TopPanel.Visibility = visibility;
+            if (contents != null &&
+                !string.IsNullOrEmpty(propertiesAndItemsControl.SearchText) &&
+                leftPaneTabControl.SelectedItem == propertiesAndItemsTab)
+            {
+                propertiesAndItemsControl.RetriggerSearch();
+            }
         }
 
         public IProjectOrEvaluation GetProjectContext()
@@ -1921,6 +2203,16 @@ Recent (");
             leftPaneTabControl.SelectedItem = searchLogTab;
         }
 
+        public void SelectPropertiesAndItemsTab(string newText = null)
+        {
+            if (newText != null)
+            {
+                propertiesAndItemsControl.SearchText = newText;
+            }
+
+            leftPaneTabControl.SelectedItem = propertiesAndItemsTab;
+        }
+
         public void SelectFindInFilesTab(string newText = null)
         {
             // Only proceed if Find in Files tab is available
@@ -2139,6 +2431,25 @@ Recent (");
         private bool CanShowInExplorer()
         {
             return FileExplorerHelper.GetFilePathFromNode(treeView.SelectedItem as BaseNode) is not null;
+        }
+
+        public void ViewProperty()
+        {
+            var selectedItem = treeView.SelectedItem;
+            if (selectedItem is Property property)
+            {
+                SearchForProperty(property.Name);
+            }
+            else if (selectedItem is PropertyAssignmentMessage assignment)
+            {
+                SearchForProperty(assignment.Parent.Title);
+            }
+            else if (selectedItem is Folder reassignmentFolder
+                && reassignmentFolder.Parent is TimedNode parent
+                && (parent.Name == Strings.PropertyReassignmentFolder || parent.Name == Strings.PropertyAssignmentFolder))
+            {
+                SearchForProperty(reassignmentFolder.Name);
+            }
         }
 
         public void SearchInSubtree()
@@ -2473,9 +2784,9 @@ Recent (");
         {
             return node is AbstractDiagnostic
                 || node is Project
-                || (node is Target t && t.SourceFilePath != null && sourceFileResolver.HasFile(t.SourceFilePath))
+                || (node is Target t && t.SourceFilePath is string targetFilePath && sourceFileResolver.HasFile(targetFilePath))
                 || (node is Task task && task.Parent is Target parentTarget && sourceFileResolver.HasFile(parentTarget.SourceFilePath))
-                || (node is IHasSourceFile ihsf && ihsf.SourceFilePath != null && sourceFileResolver.HasFile(ihsf.SourceFilePath));
+                || (node is IHasSourceFile ihsf && ihsf.SourceFilePath is string sourceFilePath && sourceFileResolver.HasFile(sourceFilePath));
         }
 
         private bool HasFullText(BaseNode node)
@@ -2537,7 +2848,10 @@ Recent (");
                     case Target target when target.Parent is Folder:
                         return SearchForTarget(target.Name);
                     case Target target:
-                        return DisplayTarget(target.SourceFilePath, target.Name);
+                        return DisplayTarget(
+                            target.SourceFilePath,
+                            target.Name,
+                            evaluation: target.Project.GetEvaluation());
                     case Task task:
                         return DisplayTask(task);
                     case AddItem addItem:
@@ -2587,7 +2901,8 @@ Recent (");
 
                             if (documentWell.tabControl.SelectedItem is TabItem current &&
                                 current.Content is TextViewerControl currentTextViewer &&
-                                currentTextViewer.EditorExtension is { } extension)
+                                currentTextViewer.EditorExtension is { } extension &&
+                                extension.PreprocessContext != null)
                             {
                                 int offset = extension.PreprocessContext.FindFileOffset(sourceFilePath);
                                 if (offset > 0)
@@ -2602,6 +2917,11 @@ Recent (");
                         return DisplayFile(hasSourceFile.SourceFilePath, line, evaluation: evaluation);
                     case SourceFileLine sourceFileLine when sourceFileLine.Parent is SourceFile sourceFile && sourceFile.SourceFilePath != null:
                         return DisplayFile(sourceFile.SourceFilePath, sourceFileLine.LineNumber);
+                    case Property property:
+                        return SearchForProperty(property.Name);
+                    case Folder folder when folder.Parent is TimedNode parent &&
+                        (parent.Name == Strings.PropertyReassignmentFolder || parent.Name == Strings.PropertyAssignmentFolder):
+                        return SearchForProperty(folder.Name);
                     default:
                         return false;
                 }
@@ -2658,6 +2978,12 @@ Recent (");
             return true;
         }
 
+        private bool SearchForProperty(string name)
+        {
+            SelectPropertiesAndItemsTab($"$property \"{name}\"");
+            return true;
+        }
+
         private bool DisplayEmbeddedFile(Item item)
         {
             string path = item.Text;
@@ -2687,27 +3013,28 @@ Recent (");
                 preprocess = preprocessedFileManager.GetPreprocessAction(preprocessableFilePath, PreprocessedFileManager.GetEvaluationKey(evaluation));
             }
 
-            EditorExtension editorExtension = null;
             var context = preprocessedFileManager.TryGetContext(sourceFilePath);
-            if (context != null)
+            evaluation ??= context?.Evaluation;
+
+            var editorExtension = new EditorExtension();
+            editorExtension.PreprocessContext = context;
+            editorExtension.Evaluation = evaluation;
+
+            editorExtension.ImportSelected += import =>
             {
-                editorExtension = new EditorExtension();
-                editorExtension.PreprocessContext = context;
-
-                evaluation ??= context.Evaluation;
-
-                editorExtension.ImportSelected += import =>
+                if (import != null)
                 {
-                    if (import != null)
-                    {
-                        UpdateBreadcrumb(import);
-                    }
-                    else if (evaluation != null)
-                    {
-                        UpdateBreadcrumb(evaluation);
-                    }
-                };
-            }
+                    UpdateBreadcrumb(import);
+                }
+                else if (evaluation != null)
+                {
+                    UpdateBreadcrumb(evaluation);
+                }
+            };
+            editorExtension.GoToProperty += propertyName =>
+            {
+                SearchForProperty(propertyName);
+            };
 
             documentWell.DisplaySource(
                 preprocessableFilePath,
@@ -2756,7 +3083,7 @@ Recent (");
             return DisplayTarget(sourceFilePath, target.Name, name);
         }
 
-        public bool DisplayTarget(string sourceFilePath, string targetName, string taskName = null)
+        public bool DisplayTarget(string sourceFilePath, string targetName, string taskName = null, ProjectEvaluation evaluation = null)
         {
             var text = sourceFileResolver.GetSourceFileText(sourceFilePath);
             if (text == null)
@@ -2764,17 +3091,10 @@ Recent (");
                 return false;
             }
 
-            var xml = text.XmlRoot.Root;
-            IXmlElement root = xml;
+            IXmlElement root = text.RootElement;
+
             int startPosition = 0;
             int line = 0;
-
-            // work around a bug in Xml Parser where a virtual parent is created around the root element
-            // when the root element is preceded by trivia (comment)
-            if (root.Name == null && root.Elements.FirstOrDefault() is IXmlElement firstElement && firstElement.Name == "Project")
-            {
-                root = firstElement;
-            }
 
             foreach (var element in root.Elements)
             {
@@ -2804,7 +3124,7 @@ Recent (");
                 line = text.GetLineNumberFromPosition(startPosition);
             }
 
-            return DisplayFile(sourceFilePath, line + 1);
+            return DisplayFile(sourceFilePath, line + 1, evaluation: evaluation);
         }
 
         private static BaseNode GetNode(RoutedEventArgs args)
@@ -2845,6 +3165,32 @@ Recent (");
                 };
 
                 folder.AddChildAtBeginning(showAllButton);
+            }
+
+            var projects = folder.Children
+                .OfType<ProxyNode>()
+                .Select(p => p.Original as Project)
+                .Where(p => p != null)
+                .ToArray();
+            if (projects.Length > 1 && projects.Length < 20)
+            {
+                var viewProjectGraphButton = new ButtonNode
+                {
+                    Text = $"View project graph"
+                };
+
+                viewProjectGraphButton.OnClick = () =>
+                {
+                    centralTabControl.SelectedItem = projectReferenceGraphTab;
+                    if (projectReferenceGraphTab.Content is GraphHostControl host)
+                    {
+                        var text = string.Join(";", projects.Select(p => Path.GetFileNameWithoutExtension(p.Name)).ToArray());
+                        host.SearchText = text;
+                        host.Locate(text);
+                    }
+                };
+
+                folder.AddChild(viewProjectGraphButton);
             }
 
             return folder.Children;

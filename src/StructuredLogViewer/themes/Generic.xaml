@@ -774,11 +774,52 @@
     </DataTemplate.Triggers>
   </DataTemplate>
 
+  <HierarchicalDataTemplate DataType="{x:Type core:SourceFileLineWithHighlights}" ItemsSource="{Binding Children}">
+    <StackPanel x:Name="rootPanel" Orientation="Horizontal" ToolTip="{Binding ToolTip}">
+      <TextBlock x:Name="lineNumber"
+                 Text="{Binding LineNumber}"
+                 FontFamily="Consolas"
+                 Foreground="Teal"
+                 Margin="0,0,12,0"
+                 VerticalAlignment="Center" />
+      <ItemsControl x:Name="text" ItemsSource="{Binding Highlights}" Focusable="False" VerticalAlignment="Center">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <StackPanel Orientation="Horizontal" IsItemsHost="True" />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+      </ItemsControl>
+    </StackPanel>
+    <HierarchicalDataTemplate.Triggers>
+      <DataTrigger Binding="{Binding LineNumber}" Value="-1">
+        <Setter TargetName="lineNumber" Property="Visibility" Value="Collapsed" />
+      </DataTrigger>
+      <DataTrigger Binding="{Binding IsSelected}" Value="True">
+        <Setter TargetName="lineNumber" Property="Foreground" Value="White" />
+      </DataTrigger>
+      <DataTrigger Binding="{Binding IsLowRelevance}" Value="True">
+        <Setter TargetName="rootPanel" Property="Opacity" Value="0.25" />
+      </DataTrigger>
+      <DataTrigger Binding="{Binding IsBold}" Value="True">
+        <Setter TargetName="text" Property="FontWeight" Value="SemiBold" />
+      </DataTrigger>
+      <DataTrigger Binding="{Binding IsReadBeforeWrite}" Value="True">
+        <Setter TargetName="rootPanel" Property="Background" Value="#40FF8080" />
+      </DataTrigger>
+    </HierarchicalDataTemplate.Triggers>
+  </HierarchicalDataTemplate>
+
   <DataTemplate DataType="{x:Type l:HighlightedText}">
     <TextBlock x:Name="text" Foreground="Black" Background="Yellow" Text="{Binding Text}" />
     <DataTemplate.Triggers>
       <DataTrigger Binding="{Binding Style}" Value="time">
         <Setter TargetName="text" Property="Background" Value="Lavender" />
+      </DataTrigger>
+      <DataTrigger Binding="{Binding Style}" Value="write">
+        <Setter TargetName="text" Property="Background" Value="Turquoise" />
+      </DataTrigger>
+      <DataTrigger Binding="{Binding Style}" Value="read">
+        <Setter TargetName="text" Property="Background" Value="PaleTurquoise" />
       </DataTrigger>
     </DataTemplate.Triggers>
   </DataTemplate>
@@ -952,12 +993,12 @@
           VerticalAlignment="Center">
         <Rectangle Fill="Black">
           <Rectangle.Effect>
-            <DropShadowEffect BlurRadius="40" 
-                            Color="LightGray" 
+            <DropShadowEffect BlurRadius="20" 
+                            Color="Black" 
                             Direction="-45" 
-                            Opacity="1.0" 
+                            Opacity="0.2" 
                             RenderingBias="Performance" 
-                            ShadowDepth="40" />
+                            ShadowDepth="10" />
           </Rectangle.Effect>
         </Rectangle>
         <Grid Background="{DynamicResource Theme_WhiteBackground}">

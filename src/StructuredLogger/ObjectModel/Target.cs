@@ -89,6 +89,9 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
         private Dictionary<int, Task> tasksById;
 
+        /// <summary>
+        /// This should never be called anymore (replaced by Project.GetTaskById())
+        /// </summary>
         public Task GetTaskById(int taskId)
         {
             if (tasksById == null)
@@ -99,7 +102,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
             if (!tasksById.TryGetValue(taskId, out var task))
             {
                 var children = Children;
-                for (int i = 0; i < children.Count; i++)
+                for (int i = children.Count - 1; i >= 0; i--)
                 {
                     if (children[i] is Task t && t.Id == taskId)
                     {

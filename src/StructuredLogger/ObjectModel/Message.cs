@@ -26,6 +26,21 @@ namespace Microsoft.Build.Logging.StructuredLogger
         public override string TypeName => nameof(Message);
     }
 
+    public class PropertyAssignmentMessage : MessageWithLocation
+    {
+        public string NewValue { get; set; }
+    }
+
+    public class PropertyInitialAssignmentMessage : PropertyAssignmentMessage
+    {
+        public string Source { get; set; }
+    }
+
+    public class PropertyReassignmentMessage : PropertyAssignmentMessage
+    {
+        public string PreviousValue { get; set; }
+    }
+
     public class Message : TextNode, IHasRelevance, IHasSourceFile, IHasLineNumber
     {
         /// <summary>
@@ -48,7 +63,18 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 var match = GetSourceFileMatch();
                 if (match != null && match.Success)
                 {
-                    return match.Groups["File"].Value;
+                    if (match.Groups["File"] is { } group && !string.IsNullOrEmpty(group.Value))
+                    {
+                        return group.Value;
+                    }
+
+                    if (match.Groups["Source"] is { } sourceGroup && !string.IsNullOrEmpty(sourceGroup.Value))
+                    {
+                        if (Strings.FileLineAndColumnRegex.Match(sourceGroup.Value) is { } fileMatch)
+                        {
+                            return fileMatch.Groups["File"].Value;
+                        }
+                    }
                 }
 
                 return null;
@@ -58,6 +84,12 @@ namespace Microsoft.Build.Logging.StructuredLogger
         private Match GetSourceFileMatch()
         {
             var match = Strings.PropertyReassignmentRegex.Match(Text);
+            if (match.Success)
+            {
+                return match;
+            }
+
+            match = Strings.PropertyAssignmentRegex.Match(Text);
             if (match.Success)
             {
                 return match;

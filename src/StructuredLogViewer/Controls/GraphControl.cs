@@ -27,6 +27,8 @@ public class GraphControl
     private Dictionary<Vertex, FrameworkElement> controlFromVertex = new();
     private HashSet<FrameworkElement> selectedControls = new();
     private HashSet<Vertex> selectedVertices = new();
+    private HashSet<Vertex> specifiedVertices = new();
+    private IEnumerable<Vertex> displayedVertices = [];
 
     private Color outgoingColor, incomingColor, border, allEdgesColor;
     private Brush outgoingSolidBrush;
@@ -158,8 +160,6 @@ public class GraphControl
     }
 
     private GraphFilterMode filterMode;
-    private Vertex focusVertex;
-
     public GraphFilterMode FilterMode
     {
         get => filterMode;
@@ -171,18 +171,9 @@ public class GraphControl
             }
 
             filterMode = value;
-
-            // If enabling a filtering mode, set focus to first selected vertex
-            if (value != GraphFilterMode.None && selectedVertices.Any())
-            {
-                focusVertex = selectedVertices.First();
-            }
-            else if (value == GraphFilterMode.None)
-            {
-                focusVertex = null;
-            }
-            
             Redraw();
+
+            BringIntoView(SelectedAndSpecifiedVertices.FirstOrDefault());
         }
     }
 
@@ -236,14 +227,15 @@ public class GraphControl
 
     private void Populate()
     {
-        if (graph.IsEmpty)
+        if (graph == null || graph.IsEmpty)
         {
             return;
         }
 
-        // Get vertices to display based on filtering mode
         var verticesToDisplay = GetVerticesToDisplay();
-        
+
+        displayedVertices = verticesToDisplay;
+
         if (!verticesToDisplay.Any())
         {
             return;
@@ -290,8 +282,8 @@ public class GraphControl
                 var paddingHeight = Math.Pow(vertex.InDegree, 0.6);
                 var opacity = vertex.InDegree > 1 ? 0.9 : 0.5;
 
-                // Highlight the focus vertex if in filtering mode
-                if (filterMode != GraphFilterMode.None && vertex == focusVertex)
+                // Highlight selected vertices if in filtering mode
+                if (filterMode != GraphFilterMode.None && selectedVertices.Contains(vertex))
                 {
                     opacity = 1.0;
                     background = DarkTheme ? Color.FromRgb(255, 140, 0) : Color.FromRgb(255, 255, 0); // Orange/Yellow highlight
@@ -328,10 +320,8 @@ public class GraphControl
                         }
                     }
 
-                    // In filtering mode, clicking a vertex recenters the graph on that vertex
-                    if (filterMode != GraphFilterMode.None && vertex != focusVertex)
+                    if (filterMode != GraphFilterMode.None)
                     {
-                        focusVertex = vertex;
                         Redraw();
                     }
                 };
@@ -358,82 +348,97 @@ public class GraphControl
         SelectVertices(selectedVertices.ToArray());
     }
 
-    private IEnumerable<Vertex> GetVerticesToDisplay()
+    public IEnumerable<Vertex> AllVertices
     {
-        if (filterMode == GraphFilterMode.None)
+        get
         {
+            if (graph == null)
+            {
+                return [];
+            }
+
             return graph.Vertices;
         }
+    }
 
-        // If no focus vertex is set, use the first vertex with the highest in-degree (most connected)
-        // or fall back to the first vertex
-        if (focusVertex == null)
+    public IEnumerable<Vertex> GetVerticesToDisplay()
+    {
+        if (graph == null)
         {
-            focusVertex = graph.Vertices
-                .OrderByDescending(v => v.InDegree + v.Outgoing.Count())
-                .ThenBy(v => v.Title)
-                .FirstOrDefault();
-                
-            if (focusVertex == null)
-            {
-                return Enumerable.Empty<Vertex>();
-            }
+            return [];
+        }
+
+        if (filterMode == GraphFilterMode.None || !SelectedAndSpecifiedVertices.Any())
+        {
+            return AllVertices;
         }
 
         return filterMode switch
         {
             GraphFilterMode.DirectReferencesOnly => GetDirectlyConnectedVertices(),
             GraphFilterMode.ReachableOnly => GetReachableVertices(),
-            _ => graph.Vertices,
+            _ => AllVertices,
         };
     }
 
     private IEnumerable<Vertex> GetDirectlyConnectedVertices()
     {
-        // In direct references mode, show only the focus vertex and its directly connected vertices
         var directlyConnected = new HashSet<Vertex>();
-        
-        // Add the focus vertex itself
-        directlyConnected.Add(focusVertex);
-        
-        // Add vertices that the focus vertex depends on (outgoing connections)
-        foreach (var outgoing in focusVertex.Outgoing)
+
+        foreach (var selected in SelectedAndSpecifiedVertices)
         {
-            directlyConnected.Add(outgoing);
+            directlyConnected.Add(selected);
+
+            foreach (var outgoing in selected.Outgoing)
+            {
+                directlyConnected.Add(outgoing);
+            }
+
+            foreach (var incoming in selected.Incoming)
+            {
+                directlyConnected.Add(incoming);
+            }
         }
-        
-        // Add vertices that depend on the focus vertex (incoming connections)
-        foreach (var incoming in focusVertex.Incoming)
-        {
-            directlyConnected.Add(incoming);
-        }
-        
+
         return directlyConnected;
     }
 
     private IEnumerable<Vertex> GetReachableVertices()
     {
-        // In reachable mode, show the focus vertex and all vertices reachable in both directions
         var reachableVertices = new HashSet<Vertex>();
 
-        // Add the focus vertex itself
-        reachableVertices.Add(focusVertex);
-
-        // Add all vertices reachable from the focus vertex (forward direction)
-        foreach (var vertex in graph.Vertices)
+        foreach (var selected in SelectedAndSpecifiedVertices)
         {
-            if (vertex != focusVertex && graph.CanReach(focusVertex, vertex))
+            VisitOutgoing(selected);
+
+            // need to remove otherwise VisitIncoming will bail immediately
+            reachableVertices.Remove(selected);
+            VisitIncoming(selected);
+        }
+
+        void VisitOutgoing(Vertex vertex)
+        {
+            if (!reachableVertices.Add(vertex))
             {
-                reachableVertices.Add(vertex);
+                return;
+            }
+
+            foreach (var outgoing in vertex.Outgoing)
+            {
+                VisitOutgoing(outgoing);
             }
         }
 
-        // Add all vertices that can reach the focus vertex (backward direction)
-        foreach (var vertex in graph.Vertices)
+        void VisitIncoming(Vertex vertex)
         {
-            if (vertex != focusVertex && graph.CanReach(vertex, focusVertex))
+            if (!reachableVertices.Add(vertex))
             {
-                reachableVertices.Add(vertex);
+                return;
+            }
+
+            foreach (var incoming in vertex.Incoming)
+            {
+                VisitIncoming(incoming);
             }
         }
 
@@ -578,7 +583,7 @@ public class GraphControl
 
         if (controls != null)
         {
-            var toSelect = controls.Take(2).ToArray();
+            var toSelect = controls.ToArray();
             selectedControls.UnionWith(controls);
             foreach (var control in toSelect)
             {
@@ -592,6 +597,10 @@ public class GraphControl
             else if (toSelect.Length == 2)
             {
                 SelectControls(toSelect[0], toSelect[1]);
+            }
+            else if (toSelect.Length > 2)
+            {
+                SelectManyControls(toSelect);
             }
         }
 
@@ -607,6 +616,25 @@ public class GraphControl
     private Vertex GetVertex(FrameworkElement control)
     {
         return (Vertex)control.Tag;
+    }
+
+    private void SelectManyControls(FrameworkElement[] controls)
+    {
+        var vertices = controls.Select(c => GetVertex(c)).ToHashSet();
+
+        foreach (var control in controls)
+        {
+            var vertex = GetVertex(control);
+            var sourceRect = GetRectOnCanvas(control, canvas);
+            AddOutgoingEdges(sourceRect, vertex, visibleVertices: vertices);
+            AddIncomingEdges(sourceRect, vertex, visibleVertices: vertices);
+        }
+
+        foreach (var control in controls)
+        {
+            var sourceRect = GetRectOnCanvas(control, canvas);
+            AddRectangle(sourceRect, new SolidColorBrush(border), Brushes.PaleGreen);
+        }
     }
 
     private void SelectControls(FrameworkElement fromControl, FrameworkElement toControl)
@@ -668,9 +696,12 @@ public class GraphControl
         AddRectangle(sourceRect, new SolidColorBrush(border), Brushes.PaleGreen);
     }
 
-    private void AddIncomingEdges(Rect destinationRect, Vertex destinationVertex)
+    private void AddIncomingEdges(Rect destinationRect, Vertex destinationVertex, HashSet<Vertex> visibleVertices = null)
     {
-        var visibleVertices = filterMode != GraphFilterMode.None ? GetVerticesToDisplay().ToHashSet() : null;
+        if (visibleVertices == null)
+        {
+            visibleVertices = filterMode != GraphFilterMode.None ? GetVerticesToDisplay().ToHashSet() : null;
+        }
 
         foreach (var incoming in destinationVertex.Incoming)
         {
@@ -682,7 +713,7 @@ public class GraphControl
             }
 
             // In filtering mode, only show edges to visible vertices
-            if (filterMode != GraphFilterMode.None && visibleVertices != null && !visibleVertices.Contains(incoming))
+            if (visibleVertices != null && !visibleVertices.Contains(incoming))
             {
                 continue;
             }
@@ -700,7 +731,7 @@ public class GraphControl
     {
         IEnumerable<Vertex> list = HideTransitiveEdges ? node.NonRedundantOutgoing : node.Outgoing;
 
-        if (!allEdges)
+        if (!allEdges && visibleVertices == null)
         {
             visibleVertices = filterMode != GraphFilterMode.None ? GetVerticesToDisplay().ToHashSet() : null;
         }
@@ -745,7 +776,7 @@ public class GraphControl
         if (clearSelection)
         {
             selectedVertices.Clear();
-            focusVertex = null;
+            specifiedVertices.Clear();
         }
 
         selectedControls.Clear();
@@ -757,28 +788,59 @@ public class GraphControl
 
     public void Locate(string text)
     {
+        specifiedVertices.Clear();
         if (string.IsNullOrWhiteSpace(text))
         {
-            SelectVertices(null);
+            if (filterMode != GraphFilterMode.None)
+            {
+                Redraw();
+            }
+
             return;
         }
 
         var parts = text.Split([';'], StringSplitOptions.RemoveEmptyEntries);
-        var found = parts.Select(p => FindControlByText(p)).Where(c => c != null).Take(2).ToArray();
-        foreach (var foundControl in found)
-        {
-            foundControl.BringIntoView();
-        }
 
-        var foundVertices = found.Select(GetVertex).ToArray();
-        SelectVertices(foundVertices);
+        var foundVertices = parts.Select(p => FindVertexByText(p)).Where(v => v != null).ToArray();
+        specifiedVertices.UnionWith(foundVertices);
 
-        // In filtering mode, set focus to the first found vertex
-        if (filterMode != GraphFilterMode.None && foundVertices.Any())
+        var oldSelection = selectedVertices.ToArray();
+
+        if (filterMode != GraphFilterMode.None)
         {
-            focusVertex = foundVertices.First();
             Redraw();
         }
+
+        var newSelection = oldSelection.Intersect(displayedVertices).Union(specifiedVertices).ToArray();
+        SelectVertices(newSelection);
+
+        BringIntoView(SpecifiedAndSelectedVertices.FirstOrDefault());
+    }
+
+    private void BringIntoView(Vertex vertex)
+    {
+        if (vertex == null)
+        {
+            return;
+        }
+
+        var control = GetControl(vertex);
+        control?.BringIntoView();
+    }
+
+    private Vertex FindVertexByText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        text = text.Trim();
+
+        return AllVertices
+            .OrderBy(v => v.Title.Length)
+            .ThenBy(v => v.Title)
+            .FirstOrDefault(v => v.Title.ContainsIgnoreCase(text));
     }
 
     private FrameworkElement FindControlByText(string text)
@@ -800,6 +862,8 @@ public class GraphControl
     public Vertex SelectedVertex => SelectedVertices.FirstOrDefault();
 
     public IReadOnlyList<Vertex> SelectedVertices => selectedVertices.ToArray();
+    public IReadOnlyList<Vertex> SelectedAndSpecifiedVertices => selectedVertices.Union(specifiedVertices).ToArray();
+    public IReadOnlyList<Vertex> SpecifiedAndSelectedVertices => specifiedVertices.Union(selectedVertices).ToArray();
 
     public UIElement Content => scrollViewer;
 }

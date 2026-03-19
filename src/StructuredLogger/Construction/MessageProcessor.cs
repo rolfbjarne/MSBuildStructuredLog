@@ -344,20 +344,28 @@ namespace Microsoft.Build.Logging.StructuredLogger
         private Task lastTask;
 
         private Task GetTask(BuildEventContext buildEventContext)
-         {
+        {
             if (buildEventContext.EqualTo(lastTaskBuildEventContext))
             {
                 return lastTask;
             }
 
-            Target target = GetTarget(buildEventContext);
+            var project = construction.GetProject(buildEventContext.ProjectContextId);
+            if (project == null)
+            {
+                lastTaskBuildEventContext = null;
+                return null;
+            }
+
+            Target target = project.GetTargetById(buildEventContext.TargetId);
             if (target == null)
             {
                 lastTaskBuildEventContext = null;
                 return null;
             }
 
-            var task = target.GetTaskById(buildEventContext.TaskId);
+            var taskId = buildEventContext.TaskId;
+            var task = project.GetTaskById(taskId) ?? target.GetTaskById(taskId);
             lastTaskBuildEventContext = buildEventContext;
             lastTask = task;
             return task;
@@ -445,6 +453,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
         {
             TreeNode parent = null;
             BaseNode nodeToAdd = null;
+            Message messageNode = null;
             bool lowRelevance = false;
             bool preserveTimestamp = false;
 
@@ -545,10 +554,14 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     parent = evaluation;
                 }
 
-                Match match = null;
                 PropertyReassignmentEventArgs propertyReassignment = args as PropertyReassignmentEventArgs;
+                PropertyInitialValueSetEventArgs propertyInitialValueSet = args as PropertyInitialValueSetEventArgs;
+
+                Match propertyReassignmentMatch = null;
+                Match propertyInitialValueSetMatch = null;
+
                 if (propertyReassignment != null ||
-                    ((match = Strings.PropertyReassignmentRegex.Match(message)) != null && match.Success))
+                    ((propertyReassignmentMatch = Strings.PropertyReassignmentRegex.Match(message)) != null && propertyReassignmentMatch.Success))
                 {
                     TimedNode properties;
                     if (evaluation != null)
@@ -562,11 +575,94 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
                     var propertyName = propertyReassignment != null ?
                         propertyReassignment.PropertyName :
-                        match != null ?
-                            match.Groups["Name"].Value :
+                        propertyReassignmentMatch != null ?
+                            propertyReassignmentMatch.Groups["Name"].Value :
                             Strings.GetPropertyName(message);
 
                     parent = properties.GetOrCreateNodeWithName<Folder>(propertyName);
+
+                    if (propertyReassignment != null)
+                    {
+                        string filePath = propertyReassignment.File;
+                        int line = propertyReassignment.LineNumber;
+                        if (filePath == null && propertyReassignment.Location is string location)
+                        {
+                            if (Strings.LocationRegex.Match(location) is { } match && match.Success)
+                            {
+                                filePath = match.Groups[1].Value;
+                                int.TryParse(match.Groups[2].Value, out line);
+                            }
+                        }
+
+                        messageNode = new PropertyReassignmentMessage
+                        {
+                            FilePath = filePath,
+                            Line = line,
+                            NewValue = propertyReassignment.NewValue,
+                            PreviousValue = propertyReassignment.PreviousValue
+                        };
+                    }
+                    else if (propertyReassignmentMatch != null)
+                    {
+                        var reassignment = new PropertyReassignmentMessage();
+                        messageNode = reassignment;
+                        reassignment.NewValue = propertyReassignmentMatch.Groups["NewValue"].Value;
+                        reassignment.PreviousValue = propertyReassignmentMatch.Groups["OldValue"].Value;
+                        if (propertyReassignmentMatch.Groups["File"].Value is string file &&
+                            propertyReassignmentMatch.Groups["Line"].Value is string line &&
+                            int.TryParse(line, out var lineNumber))
+                        {
+                            reassignment.FilePath = file;
+                            reassignment.Line = lineNumber;
+                        }
+                    }
+                }
+                else if (propertyInitialValueSet != null ||
+                    ((propertyInitialValueSetMatch = Strings.PropertyAssignmentRegex.Match(message)) != null && propertyInitialValueSetMatch.Success))
+                {
+                    TimedNode properties;
+                    if (evaluation != null)
+                    {
+                        properties = evaluation.EnsurePropertyAssignmentFolder;
+                    }
+                    else
+                    {
+                        properties = parent.GetOrCreateNodeWithName<TimedNode>(Strings.PropertyAssignmentFolder, addAtBeginning: true);
+                    }
+
+                    var propertyName = propertyInitialValueSet != null ?
+                        propertyInitialValueSet.PropertyName :
+                        propertyInitialValueSetMatch != null ?
+                            propertyInitialValueSetMatch.Groups["Name"].Value :
+                            Strings.GetPropertyName(message);
+
+                    parent = properties.GetOrCreateNodeWithName<Folder>(propertyName);
+
+                    if (propertyInitialValueSet != null)
+                    {
+                        messageNode = new PropertyInitialAssignmentMessage
+                        {
+                            FilePath = propertyInitialValueSet.File,
+                            Line = propertyInitialValueSet.LineNumber,
+                            NewValue = propertyInitialValueSet.PropertyValue,
+                            Source = propertyInitialValueSet.PropertySource
+                        };
+                    }
+                    else if (propertyInitialValueSetMatch != null)
+                    {
+                        var initialAssignmentMessage = new PropertyInitialAssignmentMessage();
+                        messageNode = initialAssignmentMessage;
+                        string source = propertyInitialValueSetMatch.Groups["Source"].Value;
+                        initialAssignmentMessage.Source = source;
+                        if (Strings.FileLineAndColumnRegex.Match(source) is { } match &&
+                            match.Success &&
+                            int.TryParse(match.Groups["Line"].Value, out var lineNumber))
+                        {
+                            initialAssignmentMessage.FilePath = match.Groups["File"].Value;
+                            initialAssignmentMessage.Line = lineNumber;
+                            initialAssignmentMessage.NewValue = propertyInitialValueSetMatch.Groups["NewValue"].Value;
+                        }
+                    }
                 }
                 else if (parent == evaluation && !evaluation.MessageTexts.Add(message))
                 {
@@ -677,7 +773,6 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 }
                 else
                 {
-                    Message messageNode = null;
                     string text = message;
 
                     if (args is BuildMessageEventArgs buildMessageEventArgs)
@@ -688,7 +783,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                             Intern(text);
                         }
 
-                        if (!string.IsNullOrEmpty(buildMessageEventArgs.File))
+                        if (messageNode == null && !string.IsNullOrEmpty(buildMessageEventArgs.File))
                         {
                             messageNode = new MessageWithLocation
                             {

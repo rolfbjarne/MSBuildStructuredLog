@@ -65,6 +65,8 @@ namespace Microsoft.Build.Logging.StructuredLogger
         private Dictionary<string, DirectoryData> directories = new Dictionary<string, DirectoryData>(StringComparer.OrdinalIgnoreCase);
         public bool AugmentOtherResults => false;
 
+        public Build Build { get; set; }
+
         public event Action<FileData, IList<SearchResult>> FoundSingleFileCopy;
 
         public void AnalyzeTask(Task task)
@@ -249,15 +251,24 @@ namespace Microsoft.Build.Logging.StructuredLogger
             return false;
         }
 
-        private void TryExplainSingleFileCopy(Project project, string filePath, IList<SearchResult> resultSet)
+        private void TryExplainSingleFileCopy(
+            Project project,
+            string filePath,
+            IList<SearchResult> resultSet,
+            HashSet<string> visitedProjects)
         {
+            if (!visitedProjects.Add(project.ProjectFile + filePath))
+            {
+                return;
+            }
+
             var fileName = Path.GetFileName(filePath);
+            var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(filePath);
 
             var target = project.FindTarget("_GetCopyToOutputDirectoryItemsFromTransitiveProjectReferences");
             if (target != null)
             {
-                var task = target.FindChild<MSBuildTask>();
-                if (task != null)
+                foreach (var task in target.Children.OfType<MSBuildTask>())
                 {
                     var outputItems = task.FindLastChild<Folder>(static f => f.Name == "OutputItems");
                     if (outputItems != null)
@@ -265,8 +276,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
                         var addItem = outputItems.FindChild<AddItem>();
                         if (addItem != null)
                         {
-                            var item = addItem.FindChild<Item>(filePath);
-                            if (item != null)
+                            foreach (var item in addItem.Children.OfType<Item>().Where(i => Path.GetFileName(i.Name).Equals(fileName, StringComparison.OrdinalIgnoreCase)))
                             {
                                 var metadata = item.FindChild<Metadata>(static m => m.Name == "MSBuildSourceProjectFile");
                                 if (metadata != null)
@@ -286,11 +296,29 @@ namespace Microsoft.Build.Logging.StructuredLogger
                                                 referencedProject = getCopyToOutputDirectoryItems.Project;
                                             }
 
-                                            TryExplainSingleFileCopy(referencedProject, filePath, resultSet);
+                                            TryExplainSingleFileCopy(referencedProject, filePath, resultSet, visitedProjects);
                                         }
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            }
+
+            target = project.FindTarget("ResolveProjectReferences");
+            if (target != null)
+            {
+                var outputs = target.FindChild<Folder>(Strings.TargetOutputs);
+                if (outputs != null)
+                {
+                    var outputItem = outputs.FindChild<Item>(i => Path.GetFileName(i.Text).Equals(fileName, StringComparison.OrdinalIgnoreCase));
+                    if (outputItem != null)
+                    {
+                        var metadata = outputItem.FindChild<Metadata>(static m => m.Name == "MSBuildSourceProjectFile");
+                        if (metadata != null)
+                        {
+                            resultSet.Add(new SearchResult(metadata));
                         }
                     }
                 }
@@ -316,6 +344,22 @@ namespace Microsoft.Build.Logging.StructuredLogger
                                 {
                                     var metadataValue = metadata.Value;
                                     resultSet.Add(new SearchResult(metadata));
+                                }
+                            }
+                        }
+                    }
+
+                    var results = task.FindChild<Folder>(Strings.Results);
+                    if (results != null)
+                    {
+                        foreach (var dependency in results.Children.OfType<Parameter>())
+                        {
+                            if (dependency.Title.ContainsIgnoreCase(fileNameWithoutExtension))
+                            {
+                                var resolvedFilePath = dependency.FindChild<Item>(i => i.Title.ContainsIgnoreCase(filePath));
+                                if (resolvedFilePath != null)
+                                {
+                                    resultSet.Add(new SearchResult(resolvedFilePath));
                                 }
                             }
                         }
@@ -353,7 +397,8 @@ namespace Microsoft.Build.Logging.StructuredLogger
             var singleResult = resultSet.FirstOrDefault();
             if (resultSet.Count > 1)
             {
-                singleResult = resultSet.FirstOrDefault(r => r.RootFolder == "Incoming");
+                singleResult = resultSet.FirstOrDefault(r => r.RootFolder == "Incoming")
+                    ?? singleResult;
             }
 
             var fileCopyInfo =
@@ -373,7 +418,8 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 sourceFilePath = fileCopyInfo.FileCopyOperation.Source;
             }
 
-            TryExplainSingleFileCopy(project, sourceFilePath, resultSet);
+            var visitedProjects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            TryExplainSingleFileCopy(project, sourceFilePath, resultSet, visitedProjects);
         }
 
         private static void FindCopyToOutputDirectoryItem(IList<SearchResult> resultSet, NamedNode itemsFolder, string fileName, string itemName)
@@ -447,6 +493,43 @@ namespace Microsoft.Build.Logging.StructuredLogger
                     if (results.Count >= maxResults)
                     {
                         break;
+                    }
+                }
+            }
+
+            if (results.Count == 0 && !string.IsNullOrWhiteSpace(text))
+            {
+                var rars = Build.FindChildrenRecursive<ResolveAssemblyReferenceTask>();
+                foreach (var rar in rars)
+                {
+                    var project = rar.GetNearestParent<Project>();
+                    if (project != null && matcher.ProjectMatchers.All(p => p.IsMatch(project.Name, project.SourceFilePath) != null))
+                    {
+                        var resultsFolder = rar.FindChild<Folder>(Strings.Results);
+                        if (resultsFolder != null)
+                        {
+                            foreach (var dependency in resultsFolder.Children.OfType<Parameter>())
+                            {
+                                bool found = false;
+                                foreach (var item in dependency.Children.OfType<Item>())
+                                {
+                                    if (item.Title.ContainsIgnoreCase(text))
+                                    {
+                                        resultSet.Add(new SearchResult(item));
+                                        found = true;
+                                    }
+                                }
+
+                                if (found)
+                                {
+                                    var copyLocal = dependency.FindChild<Item>(i => i.Title.ContainsIgnoreCase("CopyLocal"));
+                                    if (copyLocal != null)
+                                    {
+                                        resultSet.Add(new SearchResult(copyLocal));
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

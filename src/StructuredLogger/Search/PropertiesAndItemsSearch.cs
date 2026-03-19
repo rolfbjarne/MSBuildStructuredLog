@@ -8,6 +8,8 @@ namespace StructuredLogViewer
 {
     public class PropertiesAndItemsSearch
     {
+        public event Func<ProjectEvaluation, IEnumerable<SearchResult>, IEnumerable<SearchResult>> AugmentResults;
+
         public IEnumerable<SearchResult> Search(
             TimedNode context,
             string searchText,
@@ -18,6 +20,8 @@ namespace StructuredLogViewer
             var roots = new List<TreeNode>();
 
             Build build = context.GetRoot() as Build;
+
+            ProjectEvaluation evaluation = ((IProjectOrEvaluation)context).GetEvaluation(build);
 
             Project project = context as Project;
 
@@ -51,6 +55,12 @@ namespace StructuredLogViewer
                 {
                     roots.Add(reassignments);
                 }
+
+                var assignments = root.FindChild<TimedNode>(Strings.PropertyAssignmentFolder);
+                if (assignments != null)
+                {
+                    roots.Add(assignments);
+                }
             }
 
             var strings = new StringCache();
@@ -59,8 +69,13 @@ namespace StructuredLogViewer
                 CollectStrings(root, strings);
             }
 
-            var search = new Search(roots, strings.Instances, maxResults, markResultsInTree);
-            var results = search.FindNodes(searchText, cancellationToken);
+            IEnumerable<SearchResult> results = CollectResults(
+                searchText,
+                maxResults,
+                markResultsInTree,
+                roots,
+                strings,
+                cancellationToken);
 
             // When they're searching for $additem Foo, add the contents of the $additem folder
             // to search results, because this is what they likely want
@@ -72,7 +87,7 @@ namespace StructuredLogViewer
             foreach (var result in results)
             {
                 var node = result.Node;
-                if (node is not Folder itemType)
+                if (node is not AddOrRemoveItem)
                 {
                     otherResults.Add(result);
                     foreach (var ancestor in node.GetParentChainExcludingThis())
@@ -85,7 +100,7 @@ namespace StructuredLogViewer
             var includeFolderChildren = new List<BaseNode>();
 
             // Iterate over all folders where no other results are under that folder.
-            foreach (var folder in results.Select(r => r.Node).OfType<Folder>().Where(f => !allAncestors.Contains(f)))
+            foreach (var folder in results.Select(r => r.Node).OfType<AddOrRemoveItem>().Where(f => !allAncestors.Contains(f)))
             {
                 foreach (var item in folder.Children.OfType<Item>())
                 {
@@ -123,6 +138,50 @@ namespace StructuredLogViewer
                 results = results.Concat(executionResults).ToArray();
             }
 
+            if (AugmentResults != null)
+            {
+                results = AugmentResults(evaluation, results);
+            }
+
+            return results;
+        }
+
+        private static IEnumerable<SearchResult> CollectResults(
+            string searchText,
+            int maxResults,
+            bool markResultsInTree,
+            List<TreeNode> roots,
+            StringCache strings,
+            CancellationToken cancellationToken)
+        {
+            var matcher = new NodeQueryMatcher(searchText);
+            if (matcher.TypeKeyword == "property" &&
+                matcher.Terms.Count > 1 &&
+                matcher.NameTermIndex == -1 &&
+                matcher.ValueTermIndex == -1)
+            {
+                var list = new List<SearchResult>();
+
+                foreach (var term in matcher.Terms)
+                {
+                    var nested = CollectResults(
+                        $"$property {term.GetText()}",
+                        maxResults,
+                        markResultsInTree,
+                        roots,
+                        strings,
+                        cancellationToken);
+                    if (nested != null)
+                    {
+                        list.AddRange(nested);
+                    }
+                }
+
+                return list;
+            }
+
+            var search = new Search(roots, strings.Instances, maxResults, markResultsInTree);
+            var results = search.FindNodes(searchText, cancellationToken);
             return results;
         }
 
@@ -150,7 +209,9 @@ namespace StructuredLogViewer
                 case Folder folder:
                     strings.Intern(folder.Name);
                     break;
-                case Message message when Strings.PropertyReassignmentRegex.IsMatch(message.Text):
+                case Message message when
+                    Strings.PropertyReassignmentRegex.IsMatch(message.Text) ||
+                    Strings.PropertyAssignmentRegex.IsMatch(message.Text):
                     strings.Intern(message.Text);
                     break;
                 default:
