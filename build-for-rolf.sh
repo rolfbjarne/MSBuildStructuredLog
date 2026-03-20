@@ -17,10 +17,11 @@ else
     RID=osx-x64
 fi
 
+rm -rf "$PUBLISH_DIR" "$BUNDLE_DIR"
+
 dotnet publish "$PROJECT_DIR" --self-contained -r $RID -o "$PUBLISH_DIR"
 
 # Create the .app bundle
-rm -rf "$BUNDLE_DIR"
 mkdir -p "$BUNDLE_DIR/Contents/MacOS"
 mkdir -p "$BUNDLE_DIR/Contents/Resources"
 mkdir -p "$BUNDLE_DIR/Contents/Frameworks"
