@@ -47,10 +47,6 @@ namespace StructuredLogViewer.Avalonia
         public MainWindow()
         {
             InitializeComponent();
-#if DEBUG
-            this.AttachDevTools();
-#endif
-
             TemplateApplied += MainWindow_Loaded;
         }
 
@@ -388,7 +384,7 @@ namespace StructuredLogViewer.Avalonia
             SetContent(parametersScreen);
         }
 
-        private async void BuildCore(string projectFilePath, string customArguments)
+        private async void BuildCore(string projectFilePath, string customArguments, string searchText = null)
         {
             var progress = new BuildProgress() { IsIndeterminate = true };
             progress.ProgressText = $"Building {projectFilePath}...";
@@ -398,6 +394,10 @@ namespace StructuredLogViewer.Avalonia
             progress.ProgressText = "Analyzing build...";
             await QueueAnalyzeBuild(result);
             DisplayBuild(result);
+            if (!string.IsNullOrWhiteSpace(searchText) && CurrentBuildControl != null)
+            {
+                CurrentBuildControl.InitialSearchText = searchText;
+            }
         }
 
         private async Task QueueAnalyzeBuild(Build build)
@@ -431,7 +431,7 @@ namespace StructuredLogViewer.Avalonia
             var files = await TopLevel.GetTopLevel(this)!.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
             {
                 Title = "Build Log",
-                FileTypeFilter = new[] { FilePickerFileTypes.All, FileTypes.Binlog, FileTypes.Xml }
+                FileTypeFilter = new[] { FilePickerFileTypes.All, FileTypes.Binlog, FilePickerFileTypes.Xml }
             });
 
             var firstFile = files.FirstOrDefault();
@@ -466,8 +466,9 @@ namespace StructuredLogViewer.Avalonia
         {
             if (!string.IsNullOrEmpty(projectFilePath))
             {
+                var searchText = CurrentBuildControl?.SearchText;
                 var args = SettingsService.GetCustomArguments(projectFilePath);
-                BuildCore(projectFilePath, args);
+                BuildCore(projectFilePath, args, searchText);
             }
         }
 
@@ -491,7 +492,7 @@ namespace StructuredLogViewer.Avalonia
                 var result = await TopLevel.GetTopLevel(this)!.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions()
                 {
                     Title = "Save log file as",
-                    FileTypeChoices = new[] { FileTypes.Binlog, FileTypes.Xml },
+                    FileTypeChoices = new[] { FileTypes.Binlog, FilePickerFileTypes.Xml },
                     DefaultExtension = FileTypes.BinlogDefaultExtension,
                 });
 

@@ -11,6 +11,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Data;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using Avalonia.Styling;
@@ -65,6 +66,12 @@ namespace StructuredLogViewer.Avalonia.Controls
         public TreeView ActiveTreeView;
 
         private PropertiesAndItemsSearch propertiesAndItemsSearch;
+
+        static BuildControl()
+        {
+            PreprocessedFileManager.GetPreprocessedFilePath = SettingsService.GetPreprocessedFilePath;
+            PreprocessedFileManager.WriteContentToTempFileAndGetPath = SettingsService.WriteContentToTempFileAndGetPath;
+        }
 
         public BuildControl()
         {
@@ -209,9 +216,12 @@ namespace StructuredLogViewer.Avalonia.Controls
             Style GetTreeViewItemStyle()
             {
                 var treeViewItemStyle = new Style(s => s.OfType<TreeViewItem>());
-                treeViewItemStyle.Setters.Add(new Setter(TreeViewItem.IsExpandedProperty, new Binding("IsExpanded") {Mode = BindingMode.TwoWay}));
-                treeViewItemStyle.Setters.Add(new Setter(TreeViewItem.IsSelectedProperty, new Binding("IsSelected") {Mode = BindingMode.TwoWay}));
-                treeViewItemStyle.Setters.Add(new Setter(IsVisibleProperty, new Binding("IsVisible") {Mode = BindingMode.TwoWay}));
+                treeViewItemStyle.Setters.Add(new Setter(TreeViewItem.IsExpandedProperty,
+                    CompiledBinding.Create<Item, bool>(i => i.IsExpanded, mode: BindingMode.TwoWay)));
+                treeViewItemStyle.Setters.Add(new Setter(TreeViewItem.IsSelectedProperty,
+                    CompiledBinding.Create<Item, bool>(i => i.IsSelected, mode: BindingMode.TwoWay)));
+                treeViewItemStyle.Setters.Add(new Setter(IsVisibleProperty,
+                    CompiledBinding.Create<Item, bool>(i => i.IsVisible, mode: BindingMode.TwoWay)));
                 return treeViewItemStyle;
             }
 
@@ -887,6 +897,8 @@ Recent:
 
         public string InitialSearchText { get; set; }
 
+        public string SearchText => searchLogControl?.SearchText;
+
         public void SelectItem(BaseNode item)
         {
             var parentChain = item.GetParentChainExcludingThis();
@@ -1333,17 +1345,9 @@ Recent:
                 return false;
             }
 
-            var xml = text.XmlRoot.Root;
-            IXmlElement root = xml;
+            SourceTextXml.TryGetXml(text, out var root);
             int startPosition = 0;
             int line = 0;
-
-            // work around a bug in Xml Parser where a virtual parent is created around the root element
-            // when the root element is preceded by trivia (comment)
-            if (root.Name == null && root.Elements.FirstOrDefault() is IXmlElement firstElement && firstElement.Name == "Project")
-            {
-                root = firstElement;
-            }
 
             foreach (var element in root.Elements)
             {
