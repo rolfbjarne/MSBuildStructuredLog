@@ -5,6 +5,20 @@
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <ProduceReferenceAssembly>true</ProduceReferenceAssembly>
   </PropertyGroup>
+  <PropertyGroup>
+    <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
+    <PackageId>MSBuild.StructuredLogger.Utils</PackageId>
+    <Authors>Kirill Osenkov, Microsoft</Authors>
+    <Company>Microsoft</Company>
+    <Description>Utility helpers for analyzing and processing MSBuild structured log (.binlog) files. Builds on top of MSBuild.StructuredLogger.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/KirillOsenkov/MSBuildStructuredLog</PackageProjectUrl>
+    <IconFilePath>$(MSBuildThisFileDirectory)..\StructuredLogViewer\icons\msbuild-structured-log-viewer.png</IconFilePath>
+    <PackageIcon>msbuild-structured-log-viewer.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/KirillOsenkov/MSBuildStructuredLog</RepositoryUrl>
+    <PackageTags>MSBuild Log Logger Structure Structured</PackageTags>
+  </PropertyGroup>
   <ItemGroup Condition=" '$(OS)' == 'Windows_NT' ">
     <PackageReference Include="Nerdbank.GitVersioning" PrivateAssets="all" />
   </ItemGroup>
@@ -19,6 +33,10 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\StructuredLogger\StructuredLogger.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="$(IconFilePath)" Pack="true" PackagePath="" />
+    <None Include="$(MSBuildThisFileDirectory)..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
   <PropertyGroup Condition=" '$(OS)' == 'Windows_NT' ">
     <SignAssembly>True</SignAssembly>

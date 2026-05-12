@@ -3,13 +3,12 @@ A logger for MSBuild that records a structured representation of executed target
 
 [![Build status](https://ci.appveyor.com/api/projects/status/v7vwgphs239i14ya?svg=true)](https://ci.appveyor.com/project/KirillOsenkov/msbuildstructuredlog)
 [![NuGet package](https://img.shields.io/nuget/v/MSBuild.StructuredLogger.svg)](https://nuget.org/packages/MSBuild.StructuredLogger)
+[![Utils NuGet package](https://img.shields.io/nuget/v/MSBuild.StructuredLogger.Utils.svg)](https://nuget.org/packages/MSBuild.StructuredLogger.Utils) (optional)
 [![Chocolatey](https://img.shields.io/chocolatey/v/msbuild-structured-log-viewer.svg)](https://chocolatey.org/packages/msbuild-structured-log-viewer)
 
 Homepage: https://msbuildlog.com
-
-View binlogs in the Browser: https://live.msbuildlog.com
-
-Important: the NuGet package is now being published to https://nuget.org/packages/MSBuild.StructuredLogger (old location: https://nuget.org/packages/Microsoft.Build.Logging.StructuredLogger). Please update to use the new Package Id.
+BinlogMcp: https://msbuildlog.com/binlogmcp
+Syntax: https://msbuildlog.com/syntax
 
 Thanks to [SignPath.io](https://signpath.io?utm_source=foundation&utm_medium=github&utm_campaign=MSBuildStructuredLog) for providing a free code signing service and to the [SignPath Foundation](https://signpath.org?utm_source=foundation&utm_medium=github&utm_campaign=MSBuildStructuredLog) for a free code signing certificate to sign the installer.
 
@@ -53,39 +52,21 @@ exec dotnet ${HOME}/tools/artifacts/StructuredLogViewer.Avalonia/publish/Structu
 
 Windows:
  * .NET Framework 4.7.2
- * MSBuild 16.0
- * Visual Studio 2019
+ * MSBuild 17.0
+ * Visual Studio 2022
 
 Mac:
- * .NET 8 SDK
+ * .NET SDK
 
 ## Usage:
 
-Starting with MSBuild 15.3 you can pass the new `/bl` switch to `msbuild.exe` to record a binary build log to `msbuild.binlog`, in the same folder as the project/solution being built:
+You can pass `/bl` switch to `msbuild.exe` or `dotnet build` to record a binary build log to `msbuild.binlog`, in the same folder as the project/solution being built:
 
 ![Screenshot](https://msbuildlog.com/BinLogFromCommandLine.png)
 
 or you can build the solution or open an existing log file through the viewer app:
 
 ![Screenshot2](/docs/Screenshot2.png)
-
-Alternatively (useful for older versions of MSBuild) you can attach the logger to any MSBuild-based build using the logger library: `StructuredLogger.dll`. It is available in a NuGet package:
-https://www.nuget.org/packages/MSBuild.StructuredLogger
-
-```
-msbuild solution.sln /t:Rebuild /v:diag /noconlog /logger:BinaryLogger,%localappdata%\MSBuildStructuredLogViewer\app-2.1.596\StructuredLogger.dll;1.binlog
-```
-
-To use a portable version of the logger (e.g. with the `dotnet msbuild` command) you need a .NET Standard version of `StructuredLogger.dll`, not the .NET Framework (Desktop) version.
-
-Download this NuGet package: https://www.nuget.org/packages/MSBuild.StructuredLogger/2.1.545
-and inside it there's the `lib\netstandard2.0\StructuredLogger.dll`. Try passing that to `dotnet build` like this:
-```
-dotnet msbuild Some.sln /v:diag /nologo /logger:BinaryLogger,"packages\MSBuild.StructuredLogger.2.1.545\lib\netstandard2.0\StructuredLogger.dll";"C:\Users\SomeUser\Desktop\binarylog.binlog"
-```
-
-Read more about the log formats here:
-https://github.com/KirillOsenkov/MSBuildStructuredLog/wiki/Log-Format
 
 ## Features:
 
