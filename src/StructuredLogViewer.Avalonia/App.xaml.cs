@@ -22,7 +22,7 @@ namespace StructuredLogViewer.Avalonia
         {
             Current.RequestedThemeVariant = SettingsService.UseDarkTheme
                 ? ThemeVariant.Dark
-                : ThemeVariant.Light;
+                : ThemeVariant.Default;
         }
 
         public override void OnFrameworkInitializationCompleted()

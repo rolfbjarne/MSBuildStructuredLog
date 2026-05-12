@@ -86,34 +86,39 @@ namespace StructuredLogViewer.Avalonia.Controls
                 textView.Options.LineHeightFactor = 0.87;
             }
 
-            if (SettingsService.UseDarkTheme)
+            ActualThemeVariantChanged += (s, e) => UpdateTheme();
+            UpdateTheme();
+        }
+
+        private void UpdateTheme()
+        {
+            var variant = global::Avalonia.Application.Current.ActualThemeVariant;
+            bool isDark = variant == ThemeVariant.Dark;
+            var background = GetThemeBrush("Theme_WhiteBackground", variant, isDark ? "#303030" : "#FFFFFF");
+            var foreground = GetThemeBrush("Theme_ControlText", variant, isDark ? "#E0E0E0" : "#000000");
+            textEditor.Background = background;
+            textEditor.Foreground = foreground;
+            var textArea = textEditor.TextArea;
+            var textView = textArea.TextView;
+            textView.CurrentLineBackground = new SolidColorBrush(Color.Parse(isDark ? "#505050" : "#E0E0E0"));
+            textView.CurrentLineBorder = new Pen(Brushes.Transparent, 0);
+            textArea.SelectionBrush = GetThemeBrush("Theme_EditorSelection", variant, isDark ? "#264F78" : "#87CEFA");
+            textArea.SelectionForeground = isDark ? new SolidColorBrush(Color.Parse("#C8C8C8")) : foreground;
+            var foldingMargin = textArea.LeftMargins.OfType<FoldingMargin>().FirstOrDefault();
+            if (foldingMargin != null)
             {
-                var background = GetThemeBrush("Theme_WhiteBackground", ThemeVariant.Dark, "#303030");
-                var foreground = GetThemeBrush("Theme_ControlText", ThemeVariant.Dark, "#E0E0E0");
-                textEditor.Background = background;
-                textEditor.Foreground = foreground;
-                textView.CurrentLineBackground = new SolidColorBrush(Color.Parse("#505050"));
-                textArea.SelectionBrush = GetThemeBrush("Theme_EditorSelection", ThemeVariant.Dark, "#264F78");
-                textArea.SelectionForeground = new SolidColorBrush(Color.Parse("#C8C8C8"));
-                var foldingMargin = textArea.LeftMargins.OfType<FoldingMargin>().FirstOrDefault();
-                if (foldingMargin != null)
-                {
-                    foldingMargin.FoldingMarkerBackgroundBrush = background;
-                    foldingMargin.FoldingMarkerBrush = foreground;
-                    foldingMargin.SelectedFoldingMarkerBackgroundBrush = background;
-                    foldingMargin.SelectedFoldingMarkerBrush = foreground;
-                }
+                foldingMargin.FoldingMarkerBackgroundBrush = background;
+                foldingMargin.FoldingMarkerBrush = foreground;
+                foldingMargin.SelectedFoldingMarkerBackgroundBrush = background;
+                foldingMargin.SelectedFoldingMarkerBrush = foreground;
             }
-            else
+
+            if (IsXml)
             {
-                textView.CurrentLineBackground = new SolidColorBrush(Color.FromRgb(224, 224, 224));
-                textView.CurrentLineBorder = new Pen(Brushes.Transparent, 0);
-                textArea.SelectionBrush = GetThemeBrush("Theme_EditorSelection", ThemeVariant.Light, "#87CEFA");
+                UpdateXmlHighlighting();
             }
         }
 
-        // the theme can only change on the welcome screen, when no text viewers exist,
-        // so resolving the brush once at construction is sufficient (same as WPF)
         private static IBrush GetThemeBrush(string key, ThemeVariant variant, string fallback)
         {
             return global::Avalonia.Application.Current.TryGetResource(key, variant, out var value) && value is IBrush brush
@@ -230,39 +235,7 @@ namespace StructuredLogViewer.Avalonia.Controls
                 {
                     IsXml = true;
 
-                    var highlighting = HighlightingManager.Instance.GetDefinition("XML");
-
-                    void SetColor(string name, string hex)
-                    {
-                        highlighting.GetNamedColor(name).Foreground = new SimpleHighlightingBrush(Color.Parse(hex));
-                    }
-
-                    if (SettingsService.UseDarkTheme)
-                    {
-                        SetColor("Comment", "#57A64A");
-                        SetColor("CData", "#E9D585");
-                        SetColor("DocType", "#92CAF4");
-                        SetColor("XmlDeclaration", "#92CAF4");
-                        SetColor("XmlTag", "#569CD6");
-                        SetColor("AttributeName", "#92CAF4");
-                        SetColor("AttributeValue", "#C8C8C8");
-                        SetColor("Entity", "#92CAF4");
-                        SetColor("BrokenEntity", "#92CAF4");
-                    }
-                    else
-                    {
-                        SetColor("Comment", "#008000");
-                        SetColor("CData", "#808080");
-                        SetColor("DocType", "#0000FF");
-                        SetColor("XmlDeclaration", "#0000FF");
-                        SetColor("XmlTag", "#A31515");
-                        SetColor("AttributeName", "#FF0000");
-                        SetColor("AttributeValue", "#0000FF");
-                        SetColor("Entity", "#FF0000");
-                        SetColor("BrokenEntity", "#FF0000");
-                    }
-
-                    textEditor.SyntaxHighlighting = highlighting;
+                    UpdateXmlHighlighting();
                 }
 
                 var foldingStrategy = new XmlFoldingStrategy();
@@ -278,6 +251,44 @@ namespace StructuredLogViewer.Avalonia.Controls
                 textEditor.SyntaxHighlighting = null;
                 FoldingManager.Clear();
             }
+        }
+
+        private void UpdateXmlHighlighting()
+        {
+            var highlighting = HighlightingManager.Instance.GetDefinition("XML");
+
+            void SetColor(string name, string hex)
+            {
+                highlighting.GetNamedColor(name).Foreground = new SimpleHighlightingBrush(Color.Parse(hex));
+            }
+
+            if (global::Avalonia.Application.Current.ActualThemeVariant == ThemeVariant.Dark)
+            {
+                SetColor("Comment", "#57A64A");
+                SetColor("CData", "#E9D585");
+                SetColor("DocType", "#92CAF4");
+                SetColor("XmlDeclaration", "#92CAF4");
+                SetColor("XmlTag", "#569CD6");
+                SetColor("AttributeName", "#92CAF4");
+                SetColor("AttributeValue", "#C8C8C8");
+                SetColor("Entity", "#92CAF4");
+                SetColor("BrokenEntity", "#92CAF4");
+            }
+            else
+            {
+                SetColor("Comment", "#008000");
+                SetColor("CData", "#808080");
+                SetColor("DocType", "#0000FF");
+                SetColor("XmlDeclaration", "#0000FF");
+                SetColor("XmlTag", "#A31515");
+                SetColor("AttributeName", "#FF0000");
+                SetColor("AttributeValue", "#0000FF");
+                SetColor("Entity", "#FF0000");
+                SetColor("BrokenEntity", "#FF0000");
+            }
+
+            textEditor.SyntaxHighlighting = highlighting;
+            textEditor.TextArea.TextView.Redraw();
         }
 
         private bool TryParseCondition(string text, out string newText)
