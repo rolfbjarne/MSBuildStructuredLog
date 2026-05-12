@@ -5,7 +5,7 @@
              xmlns:s="clr-namespace:StructuredLogViewer.Avalonia.Controls;assembly=StructuredLogViewer.Avalonia"
              xmlns:avalonia="clr-namespace:StructuredLogViewer.Avalonia;assembly=StructuredLogViewer.Avalonia"
              x:Class="StructuredLogViewer.Avalonia.App"
-             RequestedThemeVariant="Light"
+             RequestedThemeVariant="Default"
              Name="MSBuild Structured Log Viewer">
 
     <Application.Resources>
@@ -64,7 +64,7 @@
                 <Rectangle Name="icon"
                            Classes="nodeIcon"
                            Stroke="{StaticResource FolderStroke}"
-                           Fill="{StaticResource ClosedFolderBrush}" />
+                           Fill="{DynamicResource ClosedFolderBrush}" />
                 <TextBlock Name="nameText"
                            Classes="nodeText"
                            Text="{Binding Name}"
@@ -77,7 +77,7 @@
                             Value="Red" />
                     <Setter TargetName="icon"
                             Property="Fill"
-                            Value="{StaticResource ErrorBrush}" />
+                            Value="{DynamicResource ErrorBrush}" />
                 </DataTrigger>
             </TreeDataTemplate.Triggers>-->
         </TreeDataTemplate>
@@ -120,7 +120,7 @@
                 <Rectangle Name="icon"
                            Classes="nodeIcon"
                            Stroke="{StaticResource TargetStroke}"
-                           Fill="{StaticResource TargetBrush}" />
+                           Fill="{DynamicResource TargetBrush}" />
                 <TextBlock Name="label"
                            Classes="nodeBeforeText"
                            Text="Target "
@@ -135,7 +135,7 @@
                 <Rectangle Name="icon"
                            Classes="nodeIcon"
                            Stroke="{StaticResource TargetStroke}"
-                           Fill="{StaticResource TargetBrush}" />
+                           Fill="{DynamicResource TargetBrush}" />
                 <TextBlock Classes="nodeText"
                            Text="{Binding Name}" />
             </StackPanel>
@@ -147,7 +147,7 @@
                 <Rectangle Name="icon"
                            Classes="nodeIcon"
                            Stroke="{StaticResource TaskStroke}"
-                           Fill="{StaticResource TaskBrush}" />
+                           Fill="{DynamicResource TaskBrush}" />
                 <TextBlock Name="label"
                            Classes="nodeBeforeText"
                            Text="Task "
@@ -167,7 +167,7 @@
                 <Rectangle Name="icon"
                            Classes="nodeIcon"
                            Stroke="{StaticResource ItemStroke}"
-                           Fill="{StaticResource ItemBrush}" />
+                           Fill="{DynamicResource ItemBrush}" />
                 <TextBlock Name="label"
                            Classes="nodeBeforeText"
                            Text="Add Item "
@@ -183,7 +183,7 @@
                 <Rectangle Name="icon"
                            Classes="nodeIcon"
                            Stroke="{StaticResource ItemStroke}"
-                           Fill="{StaticResource ItemBrush}" />
+                           Fill="{DynamicResource ItemBrush}" />
                 <TextBlock Name="label"
                            Classes="nodeBeforeText"
                            Text="Remove Item "
@@ -199,7 +199,7 @@
                 <Rectangle Name="icon"
                            Classes="nodeIcon"
                            Stroke="{StaticResource ItemStroke}"
-                           Fill="{StaticResource ItemBrush}" />
+                           Fill="{DynamicResource ItemBrush}" />
                 <TextBlock Text="{Binding ShortenedName}"
                            Classes="nodeText" />
             </StackPanel>
@@ -211,7 +211,7 @@
                 <Rectangle Name="icon"
                            Classes="nodeIcon"
                            Stroke="{StaticResource ItemStroke}"
-                           Fill="{StaticResource ItemBrush}" />
+                           Fill="{DynamicResource ItemBrush}" />
                 <TextBlock Text="{Binding ShortenedName}"
                            Classes="nodeText" />
                 <TextBlock Text="{Binding Version}"
@@ -226,7 +226,7 @@
                 <Rectangle Name="icon"
                            Classes="nodeIcon"
                            Stroke="{StaticResource MetadataStroke}"
-                           Fill="{StaticResource ItemBrush}" />
+                           Fill="{DynamicResource ItemBrush}" />
                 <TextBlock Name="label"
                            Classes="nodeBeforeText"
                            Text="{Binding NameAndEquals, Mode=OneTime}"
@@ -268,7 +268,7 @@
                 <Rectangle Name="icon"
                            Classes="nodeIcon"
                            Stroke="{StaticResource PropertyStroke}"
-                           Fill="{StaticResource PropertyBrush}" />
+                           Fill="{DynamicResource PropertyBrush}" />
                 <TextBlock Name="label"
                            Classes="nodeBeforeText"
                            Text="{Binding NameAndEquals, Mode=OneTime}"
@@ -284,7 +284,7 @@
                 <Rectangle Name="icon"
                            Classes="nodeIcon"
                            Stroke="{StaticResource ParameterStroke}"
-                           Fill="{StaticResource ParameterBrush}" />
+                           Fill="{DynamicResource ParameterBrush}" />
                 <TextBlock Name="name"
                            Classes="nodeText"
                            Text="{Binding Name}"
@@ -296,8 +296,8 @@
             <StackPanel Orientation="Horizontal">
                 <Rectangle Name="icon"
                            Classes="nodeIcon"
-                           Stroke="{StaticResource MessageStroke}"
-                           Fill="{StaticResource MessageBrush}" />
+                           Stroke="{DynamicResource MessageStroke}"
+                           Fill="{DynamicResource MessageBrush}" />
                 <TextBlock Name="messageText"
                            Classes="nodeText"
                            Text="{Binding ShortenedText}"
@@ -312,7 +312,7 @@
                 <Rectangle Name="icon"
                            Classes="nodeIcon"
                            Stroke="{StaticResource ImportStroke}"
-                           Fill="{StaticResource ImportBrush}" />
+                           Fill="{DynamicResource ImportBrush}" />
                 <TextBlock x:Name="label"
                            Classes="nodeBeforeText"
                            Text="Import "
@@ -333,7 +333,7 @@
                 <Rectangle Name="icon"
                            Classes="nodeIcon"
                            Stroke="{StaticResource NoImportStroke}"
-                           Fill="{StaticResource NoImportBrush}" />
+                           Fill="{DynamicResource NoImportBrush}" />
                 <TextBlock x:Name="label"
                            Classes="nodeBeforeText"
                            Text="NoImport "
@@ -356,7 +356,7 @@
                 <Rectangle Name="icon"
                            Classes="nodeIcon"
                            Stroke="{StaticResource FolderStroke}"
-                           Fill="{StaticResource ClosedFolderBrush}" />
+                           Fill="{DynamicResource ClosedFolderBrush}" />
                 <TextBlock Name="nameText"
                            Classes="nodeText"
                            Text="{Binding Name}"
@@ -379,7 +379,7 @@
                 <Rectangle Name="icon"
                            Classes="nodeIcon"
                            Stroke="{StaticResource ErrorStroke}"
-                           Fill="{StaticResource ErrorBrush}" />
+                           Fill="{DynamicResource ErrorBrush}" />
                 <TextBlock Name="text"
                            Classes="nodeText"
                            Text="{Binding}"
@@ -392,7 +392,7 @@
                 <Rectangle Name="icon"
                            Classes="nodeIcon"
                            Stroke="{StaticResource WarningStroke}"
-                           Fill="{StaticResource WarningBrush}" />
+                           Fill="{DynamicResource WarningBrush}" />
                 <TextBlock Classes="nodeText"
                            Text="{Binding}" />
             </StackPanel>
@@ -400,13 +400,13 @@
 
         <DataTemplate DataType="{x:Type l:Note}">
             <StackPanel Orientation="Horizontal">
-                <Border BorderBrush="LightGray"
+                <Border BorderBrush="{DynamicResource NoteBorderBrush}"
                         BorderThickness="1"
                         Margin="4"
-                        Background="LightYellow"
+                        Background="{DynamicResource NoteBackground}"
                         Padding="6">
                     <TextBlock Text="{Binding Text}"
-                               Foreground="Gray"
+                               Foreground="{DynamicResource NoteForeground}"
                                TextWrapping="Wrap" />
                 </Border>
             </StackPanel>
@@ -417,8 +417,8 @@
             <StackPanel Orientation="Horizontal">
                 <Rectangle Name="icon"
                            Classes="nodeIcon"
-                           Stroke="{StaticResource MessageStroke}"
-                           Fill="{StaticResource MessageBrush}" />
+                           Stroke="{DynamicResource MessageStroke}"
+                           Fill="{DynamicResource MessageBrush}" />
                 <TextBlock Name="messageText"
                            Text="{Binding Name}" />
             </StackPanel>
@@ -448,8 +448,8 @@
                     <ItemsControl.DataTemplates>
                         <DataTemplate DataType="{x:Type l:HighlightedText}">
                             <TextBlock Classes="nodeBeforeText"
-                                       Foreground="Black"
-                                       Background="Yellow"
+                                       Foreground="{DynamicResource HighlightTextForeground}"
+                                       Background="{DynamicResource HighlightTextBackground}"
                                        Text="{Binding Text}" />
                         </DataTemplate>
                         <DataTemplate DataType="x:Object">
@@ -476,8 +476,8 @@
                            VerticalAlignment="Top" />
                 <Grid HorizontalAlignment="Center"
                       VerticalAlignment="Center">
-                    <Rectangle Fill="Black" />
-                    <Grid Background="White"
+                    <Rectangle Fill="{DynamicResource WelcomeBorderBrush}" />
+                    <Grid Background="{DynamicResource WelcomeBackground}"
                           RowDefinitions="Auto,Auto,Auto,Auto,Auto">
                         <TextBlock Name="customMessage"
                                    Grid.Row="0"
@@ -525,44 +525,44 @@
                                                    Canvas.Top="0"
                                                    Stroke="{StaticResource TargetStroke}"
                                                    StrokeThickness="1"
-                                                   Fill="{StaticResource TargetBrush}" />
+                                                   Fill="{DynamicResource TargetBrush}" />
                                         <Rectangle Width="35"
                                                    Height="35"
                                                    Canvas.Left="25"
                                                    Canvas.Top="35"
                                                    Stroke="{StaticResource ParameterStroke}"
                                                    StrokeThickness="1"
-                                                   Fill="{StaticResource ParameterBrush}" />
+                                                   Fill="{DynamicResource ParameterBrush}" />
                                         <Rectangle Width="35"
                                                    Height="35"
                                                    Canvas.Left="25"
                                                    Canvas.Top="70"
                                                    Stroke="{StaticResource TaskStroke}"
                                                    StrokeThickness="1"
-                                                   Fill="{StaticResource TaskBrush}" />
+                                                   Fill="{DynamicResource TaskBrush}" />
                                         <Rectangle Width="35"
                                                    Height="35"
                                                    Canvas.Left="60"
                                                    Canvas.Top="35"
                                                    Stroke="{StaticResource ItemStroke}"
                                                    StrokeThickness="1"
-                                                   Fill="{StaticResource ItemBrush}" />
+                                                   Fill="{DynamicResource ItemBrush}" />
                                         <Rectangle Width="35"
                                                    Height="35"
                                                    Canvas.Left="60"
                                                    Canvas.Top="70"
                                                    Stroke="{StaticResource FolderStroke}"
                                                    StrokeThickness="1"
-                                                   Fill="{StaticResource ClosedFolderBrush}" />
+                                                   Fill="{DynamicResource ClosedFolderBrush}" />
                                         <Line StartPoint="16,35"
                                               EndPoint="16,87"
-                                              Stroke="Black" />
+                                              Stroke="{DynamicResource TreeLineBrush}" />
                                         <Line StartPoint="16,87"
                                               EndPoint="25,87"
-                                              Stroke="Black" />
+                                              Stroke="{DynamicResource TreeLineBrush}" />
                                         <Line StartPoint="16,53"
                                               EndPoint="25,53"
-                                              Stroke="Black" />
+                                              Stroke="{DynamicResource TreeLineBrush}" />
                                     </Canvas>
                                     <TextBlock Text="Open Log File"
                                                FontSize="16"
@@ -643,15 +643,15 @@
                                 <Rectangle Width="2"
                                            Height="2"
                                            Margin="2"
-                                           Fill="Black" />
+                                           Fill="{DynamicResource BrowseButtonDotFill}" />
                                 <Rectangle Width="2"
                                            Height="2"
                                            Margin="0,2,2,2"
-                                           Fill="Black" />
+                                           Fill="{DynamicResource BrowseButtonDotFill}" />
                                 <Rectangle Width="2"
                                            Height="2"
                                            Margin="0,2,2,2"
-                                           Fill="Black" />
+                                           Fill="{DynamicResource BrowseButtonDotFill}" />
                             </StackPanel>
                         </Button>
                         <TextBlock Text="{Binding PrefixArguments}"
@@ -729,7 +729,7 @@
                              IsReadOnly="True"
                              TextWrapping="Wrap"
                              AcceptsReturn="True"
-                             Background="#E0E0E0"
+                             Background="{DynamicResource CommandLineBackground}"
                              MinHeight="23" />
                 </StackPanel>
             </Grid>

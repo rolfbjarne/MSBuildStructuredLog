@@ -78,7 +78,7 @@
     <local:SplitterPanel.SecondChild>
       <Border BorderBrush="Gray"
               BorderThickness="1">
-        <ScrollViewer Background="LightYellow">
+        <ScrollViewer Background="{DynamicResource BreadcrumbBackground}">
           <ListBox Name="breadCrumb"
                    BorderThickness="0"
                    BorderBrush="Transparent">

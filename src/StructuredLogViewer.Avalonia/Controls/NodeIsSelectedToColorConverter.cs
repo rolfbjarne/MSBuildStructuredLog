@@ -9,10 +9,13 @@ namespace StructuredLogViewer.Avalonia.Controls
     {
         public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
         {
-            if (value is bool isSelected)
-                return isSelected ? Brushes.Black : parameter;
+            if (value is bool isSelected && isSelected)
+            {
+                // When selected, use the default foreground (theme-aware)
+                return null;
+            }
 
-            return Brushes.Black;
+            return parameter;
         }
 
         public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) 

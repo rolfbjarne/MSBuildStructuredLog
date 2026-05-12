@@ -26,7 +26,7 @@
     <Grid>
       <TreeView Name="resultsList"
                 BorderThickness="0"
-                Background="#F5F5F5" />
+                Background="{DynamicResource ResultsListBackground}" />
       <ScrollViewer Name="watermarkScrollViewer"
         HorizontalScrollBarVisibility="Disabled"
         VerticalScrollBarVisibility="Auto">
