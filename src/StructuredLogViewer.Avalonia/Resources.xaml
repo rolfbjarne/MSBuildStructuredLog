@@ -96,13 +96,13 @@
             </LinearGradientBrush>
 
             <LinearGradientBrush x:Key="TaskBrush" StartPoint="0%,0%" EndPoint="100%,100%">
-                <GradientStop Color="#0A3A4A" Offset="0" />
-                <GradientStop Color="#104060" Offset="1" />
+                <GradientStop Color="#104858" Offset="0" />
+                <GradientStop Color="#185878" Offset="1" />
             </LinearGradientBrush>
 
             <LinearGradientBrush x:Key="ParameterBrush" StartPoint="0%,0%" EndPoint="100%,100%">
-                <GradientStop Color="#1A2A3A" Offset="0" />
-                <GradientStop Color="#203050" Offset="1" />
+                <GradientStop Color="#203448" Offset="0" />
+                <GradientStop Color="#284060" Offset="1" />
             </LinearGradientBrush>
 
             <LinearGradientBrush x:Key="ItemBrush" StartPoint="0%,0%" EndPoint="100%,100%">
@@ -111,8 +111,8 @@
             </LinearGradientBrush>
 
             <LinearGradientBrush x:Key="PropertyBrush" StartPoint="0%,0%" EndPoint="100%,100%">
-                <GradientStop Color="#1A2A3A" Offset="0" />
-                <GradientStop Color="#203050" Offset="1" />
+                <GradientStop Color="#203448" Offset="0" />
+                <GradientStop Color="#284060" Offset="1" />
             </LinearGradientBrush>
 
             <LinearGradientBrush x:Key="ImportBrush" StartPoint="0%,0%" EndPoint="100%,100%">
