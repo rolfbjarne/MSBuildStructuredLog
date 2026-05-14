@@ -145,8 +145,35 @@ namespace StructuredLogViewer.Avalonia.Controls
                 IsXml = true;
 
                 var highlighting = HighlightingManager.Instance.GetDefinition("XML");
-                highlighting.GetNamedColor("XmlTag").Foreground = new SimpleHighlightingBrush(Color.FromRgb(163, 21, 21));
+
+                if (SettingsService.UseDarkTheme)
+                {
+                    SetColor("Comment", "#57A64A");
+                    SetColor("CData", "#E9D585");
+                    SetColor("DocType", "#92CAF4");
+                    SetColor("XmlDeclaration", "#92CAF4");
+                    SetColor("XmlTag", "#569CD6");
+                    SetColor("AttributeName", "#92CAF4");
+                    SetColor("AttributeValue", "#C8C8C8");
+                    SetColor("Entity", "#92CAF4");
+                    SetColor("BrokenEntity", "#92CAF4");
+                }
+                else
+                {
+                    SetColor("XmlTag", "#A31515");
+                }
+
                 textEditor.SyntaxHighlighting = highlighting;
+
+                void SetColor(string name, string hex)
+                {
+                    var namedColor = highlighting.GetNamedColor(name);
+                    if (namedColor != null)
+                    {
+                        var color = Color.Parse(hex);
+                        namedColor.Foreground = new SimpleHighlightingBrush(color);
+                    }
+                }
                 
                 var foldingManager = FoldingManager.Install(textEditor.TextArea);
                 var foldingStrategy = new XmlFoldingStrategy();
