@@ -148,6 +148,24 @@ namespace Microsoft.Build.Logging.StructuredLogger
             }
         }
 
+        public void SortChildrenRecursive(Comparison<BaseNode> comparison = null)
+        {
+            SortChildren(comparison);
+
+            if (children == null)
+            {
+                return;
+            }
+
+            foreach (var child in children)
+            {
+                if (child is TreeNode childTreeNode)
+                {
+                    childTreeNode.SortChildrenRecursive(comparison);
+                }
+            }
+        }
+
         public void MakeChildrenObservable()
         {
             if (children is ObservableCollection<BaseNode>)

@@ -38,6 +38,7 @@ namespace StructuredLogViewer.Avalonia.Controls
         private MenuItem copySubtreeItem;
         private MenuItem copyVisibleSubtreeItem;
         private MenuItem sortChildrenByNameItem;
+        private MenuItem sortAllDescendantsByNameItem;
         private MenuItem sortChildrenByDurationItem;
         private MenuItem copyNameItem;
         private MenuItem copyValueItem;
@@ -182,6 +183,7 @@ namespace StructuredLogViewer.Avalonia.Controls
             copySubtreeItem = new MenuItem() { Header = "Copy subtree" };
             copyVisibleSubtreeItem = new MenuItem() { Header = "Copy visible subtree" };
             sortChildrenByNameItem = new MenuItem() { Header = "Sort children by name" };
+            sortAllDescendantsByNameItem = new MenuItem() { Header = "Sort all descendants by name (recursively)" };
             sortChildrenByDurationItem = new MenuItem() { Header = "Sort children by duration" };
             copyNameItem = new MenuItem() { Header = "Copy name" };
             copyValueItem = new MenuItem() { Header = "Copy value" };
@@ -193,6 +195,7 @@ namespace StructuredLogViewer.Avalonia.Controls
             copySubtreeItem.Click += (s, a) => CopySubtree(treeView);
             copyVisibleSubtreeItem.Click += (s, a) => CopySubtree(treeView, visibleOnly: true);
             sortChildrenByNameItem.Click += (s, a) => SortChildrenByName();
+            sortAllDescendantsByNameItem.Click += (s, a) => SortAllDescendantsByName();
             sortChildrenByDurationItem.Click += (s, a) => SortChildrenByDuration();
             copyNameItem.Click += (s, a) => CopyName();
             copyValueItem.Click += (s, a) => CopyValue();
@@ -206,6 +209,7 @@ namespace StructuredLogViewer.Avalonia.Controls
             contextMenu.AddItem(copySubtreeItem);
             contextMenu.AddItem(copyVisibleSubtreeItem);
             contextMenu.AddItem(sortChildrenByNameItem);
+            contextMenu.AddItem(sortAllDescendantsByNameItem);
             contextMenu.AddItem(sortChildrenByDurationItem);
             contextMenu.AddItem(copyNameItem);
             contextMenu.AddItem(copyValueItem);
@@ -508,6 +512,7 @@ Recent:
             copySubtreeItem.IsVisible = hasChildren;
             copyVisibleSubtreeItem.IsVisible = hasChildren;
             sortChildrenByNameItem.IsVisible = hasChildren;
+            sortAllDescendantsByNameItem.IsVisible = hasChildren;
             sortChildrenByDurationItem.IsVisible = hasChildren;
             preprocessItem.IsVisible = node is IPreprocessable p && preprocessedFileManager.CanPreprocess(p);
         }
@@ -1111,6 +1116,15 @@ Recent:
             if (selectedItem is TreeNode treeNode)
             {
                 treeNode.SortChildren();
+            }
+        }
+
+        public void SortAllDescendantsByName()
+        {
+            var selectedItem = treeView.SelectedItem;
+            if (selectedItem is TreeNode treeNode)
+            {
+                treeNode.SortChildrenRecursive();
             }
         }
 

@@ -81,6 +81,7 @@ namespace StructuredLogViewer.Controls
         private MenuItem goToTracingItem;
         private MenuItem copyChildrenItem;
         private MenuItem sortChildrenByNameItem;
+        private MenuItem sortAllDescendantsByNameItem;
         private MenuItem sortChildrenByDurationItem;
         private MenuItem filterChildrenItem;
         private MenuItem copyNameItem;
@@ -263,6 +264,7 @@ namespace StructuredLogViewer.Controls
             goToTracingItem = new MenuItem() { Header = "Tracing" };
             copyChildrenItem = new MenuItem() { Header = "Copy children" };
             sortChildrenByNameItem = new MenuItem() { Header = "Sort children by name" };
+            sortAllDescendantsByNameItem = new MenuItem() { Header = "Sort all descendants by name (recursively)" };
             sortChildrenByDurationItem = new MenuItem() { Header = "Sort children by duration" };
             filterChildrenItem = new MenuItem() { Header = "Filter children (Ctrl+F)" };
             copyNameItem = new MenuItem() { Header = "Copy name" };
@@ -309,6 +311,7 @@ namespace StructuredLogViewer.Controls
             goToTracingItem.Click += (s, a) => GoToTracing();
             copyChildrenItem.Click += (s, a) => CopyChildren();
             sortChildrenByNameItem.Click += (s, a) => SortChildrenByName();
+            sortAllDescendantsByNameItem.Click += (s, a) => SortAllDescendantsByName();
             sortChildrenByDurationItem.Click += (s, a) => SortChildrenByDuration();
             filterChildrenItem.Click += (s, a) => FilterChildren();
             copyNameItem.Click += (s, a) => CopyName();
@@ -382,6 +385,7 @@ namespace StructuredLogViewer.Controls
             contextMenu.AddItem(separator1);
 
             contextMenu.AddItem(sortChildrenByNameItem);
+            contextMenu.AddItem(sortAllDescendantsByNameItem);
             contextMenu.AddItem(sortChildrenByDurationItem);
             contextMenu.AddItem(filterChildrenItem);
             contextMenu.AddItem(hideItem);
@@ -757,6 +761,7 @@ Right-clicking a project node may show the 'Preprocess' option if the version of
             goToTracingItem = null;
             copyChildrenItem = null;
             sortChildrenByNameItem = null;
+            sortAllDescendantsByNameItem = null;
             sortChildrenByDurationItem = null;
             filterChildrenItem = null;
             copyNameItem = null;
@@ -1326,6 +1331,7 @@ Recent (");
             viewSubtreeTextItem.Visibility = hasChildrenVisibility;
             copyChildrenItem.Visibility = hasChildrenVisibility;
             sortChildrenByNameItem.Visibility = hasChildrenVisibility;
+            sortAllDescendantsByNameItem.Visibility = hasChildrenVisibility;
             sortChildrenByDurationItem.Visibility = hasChildrenVisibility;
             filterChildrenItem.Visibility = hasChildrenVisibility;
             var projectOrEvaluationVisibility = node is IProjectOrEvaluation ? Visibility.Visible : Visibility.Collapsed;
@@ -2630,6 +2636,15 @@ Recent (");
             if (selectedItem is TreeNode treeNode)
             {
                 treeNode.SortChildren();
+            }
+        }
+
+        public void SortAllDescendantsByName()
+        {
+            var selectedItem = treeView.SelectedItem;
+            if (selectedItem is TreeNode treeNode)
+            {
+                treeNode.SortChildrenRecursive();
             }
         }
 
